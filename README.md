@@ -59,30 +59,30 @@ Note: System built and tested on a Unix-based OS, so use a Virtual Machine (VM) 
     Drop your config/credentials.json (Gmail OAuth2 secrets) in place.
 
 3. **Run the scheduler**
-    <pre markdown>```bash
+    <pre markdown>bash
     python schedule_runner.py
-    ``` </pre>
+    </pre>
 
     Override on the fly:
-    <pre markdown>```bash
+    <pre markdown>bash
     SCHEDULE_CRON="0 0 * * *" python schedule_runner.py
-    ``` </pre>
+    </pre>
     One-off/backfill runs
-    <pre markdown>```bash
+    <pre markdown>
     python pipeline/run_pipeline.py --start-date 2023-01-01
-    ``` </pre>
+     </pre>
 4.  **Possible next steps**
 
-    Integrate a schema registry (Confluent or Git-backed JSON-Schema) and enforce versioning at ingest.
+    - Integrate a schema registry (Confluent or Git-backed JSON-Schema) and enforce versioning at ingest.
 
-    Swap in Google Document AI behind the PdfExtractor interface to pull invoice numbers, dates and totals.
+    - Swap in Google Document AI behind the PdfExtractor interface to pull invoice numbers, dates and totals.
 
-    Enhance drift-detection with Great Expectations or dbt tests for schema and distribution checks.
+    - Enhance drift-detection with Great Expectations or dbt tests for schema and distribution checks.
 
-    Build a web UI to edit schedule, filters and account maps and push updates to the config store.
+    - Build a web UI to edit schedule, filters and account maps and push updates to the config store.
 
-    Implement staging + upsert loading into Postgres with automatic merging on email_id + timestamp.
+    - Implement staging + upsert loading into Postgres with automatic merging on email_id + timestamp.
 
-    Migrate secrets from keyring to Vault or a cloud KMS for production-grade security.
+    - Migrate secrets from keyring to Vault or a cloud KMS for production-grade security.
 
-    Extend monitoring to include field-level z-scores, null-rate alerts and regression testing against a golden email set.
+    - Extend monitoring to include field-level z-scores, null-rate alerts and regression testing against a golden email set.
