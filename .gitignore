@@ -1,0 +1,17 @@
+# Ignore all CSV files
+*.csv
+
+# Except for bank_senders.csv
+!email_agent/config/bank_senders.csv
+
+#Ignore models directory
+models/
+
+#Ignore files with secrets
+config/.env
+config/credentials.json
+config/token.pickle
+
+#ignore access_keys and env things
+access_keys.txt
+environment_things.txt 
