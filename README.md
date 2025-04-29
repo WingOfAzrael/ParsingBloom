@@ -26,7 +26,7 @@ ParsingForge is a proof-of-concept pipeline that turns banking emails into analy
 - **Self diagnosis** with analytics on system meta-data (I like to call this meta-analytics).
 
 ## Technologies used
-- 
+
 - **Huggingface transformers**: In particular, "meta-llama/Llama-3.2-3B-Instruct", for LLM parsing. Capabilities for OpenAI, llama-cpp-python APIs are built-in but untested. 
 - **The rest**: Pretty much standard python libraries for various tasks. 
 
@@ -35,17 +35,17 @@ ParsingForge is a proof-of-concept pipeline that turns banking emails into analy
 Note: System built and tested on a Unix-based OS, so use a Virtual Machine (VM) to deploy in the following way if on Windows.
 
 1. **Clone the repo and install required modules**  
-   <pre markdown>```bash
+   <pre markdown> bash:
     git clone https://github.com/you/ParsingForge.git
     cd ParsingForge
-    ``` </pre>
+    </pre>
 
-    <pre markdown>```Create a Python virtual environment & install the dependencies
-
+    Create a Python virtual environment & install the dependencies
+    <pre markdown> bash:
     conda create venv
     conda activate venv
     pip install -r requirements.txt
-    ``` </pre>
+     </pre>
 
 2. **Configure** 
 
@@ -68,7 +68,7 @@ Note: System built and tested on a Unix-based OS, so use a Virtual Machine (VM) 
     SCHEDULE_CRON="0 0 * * *" python schedule_runner.py
     </pre>
     One-off/backfill runs
-    <pre markdown>
+    <pre markdown> bash:
     python pipeline/run_pipeline.py --start-date 2023-01-01
      </pre>
 4.  **Possible next steps**
