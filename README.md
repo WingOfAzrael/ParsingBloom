@@ -81,8 +81,10 @@ Note: System built and tested on a Unix-based OS, so use a Virtual Machine (VM) 
 
     - Build a web UI to edit schedule, filters and account maps and push updates to the config store.
 
-    - Implement staging + upsert loading into Postgres with automatic merging on email_id + timestamp.
+    - Implement staging + upsert loading into Postgres (or Snowflake if feasible), with automatic merging on email_id + timestamp.
 
     - Migrate secrets from keyring to Vault or a cloud KMS for production-grade security.
 
     - Extend monitoring to include field-level z-scores, null-rate alerts and regression testing against a golden email set.
+
+    - Incorporate automated self-diagnostic capabilities for adaptive tuning using meta-analytics.
