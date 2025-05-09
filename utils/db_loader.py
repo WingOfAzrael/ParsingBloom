@@ -1,9 +1,10 @@
 import yaml
 import pandas as pd
 from sqlalchemy import create_engine
+from config.config_loader import load_config
 
 def load_transactions_to_db():
-    cfg = yaml.safe_load(open("config/config.yaml"))['database']
+    cfg = load_config(open("config/config.yaml"))['database']
     uri = (f"postgresql://{cfg['user']}@{cfg['host']}:{cfg['port']}/"
            f"{cfg['dbname']}")
     engine = create_engine(uri)

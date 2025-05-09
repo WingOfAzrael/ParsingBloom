@@ -1,289 +1,267 @@
-import os
-import csv
+
+"""
+Hybrid parser: LLM → validate → regex fallback.
+Supports OpenAI, llama-cpp, and HuggingFace 4-bit quantized models,
+and enforces/pivots around your known internal accounts from config.yaml.
+"""
 import json
-import base64
-from datetime import datetime
-from pathlib import Path
-import yaml
+import logging
+import re
+from collections import defaultdict
+from datetime import datetime, timezone
+from json import JSONDecoder
+
 import keyring
+from email.utils import parsedate_to_datetime
+from jsonschema import validate
+from transformers import pipeline, BitsAndBytesConfig
+from llama_cpp import Llama
 
+from utils.validators import TXN_SCHEMA, validate_transaction_data
+from utils.regex_fallback import dispatch as regex_dispatch
+from parser.email_utils import extract_body
+from core.classifier import TransactionClassifier
 from core.models import Transaction
-from parser.base import BankEmailParser
+from config.config_loader import load_config
 
-import torch
-print("CUDA available:", torch.cuda.is_available())
-if torch.cuda.is_available():
-    print("GPU:", torch.cuda.get_device_name(0))
-else:
-    print("No GPU detected, using CPU.")
+# ── Config & maps ──────────────────────────────────────────────────────────
+CFG        = load_config("config/config.yaml")
+PARSER_CFG = CFG["parser"]
+PROVIDER   = PARSER_CFG["provider"].lower()
 
-# Load config
-cfg = yaml.safe_load(open("config/config.yaml"))
+ACCOUNT_NAME_MAP, ACCOUNT_NUM_MAP, ACCOUNT_CURRENCY_MAP = {}, {}, {}
+dup = defaultdict(list)
+for acct in CFG.get("accounts", []):
+    raw    = acct["internal_account_number"].strip()
+    digits = re.sub(r"\D", "", raw)
+    if len(digits) < 4:
+        continue
+    last4 = digits[-4:]
+    if last4 in ACCOUNT_NUM_MAP and ACCOUNT_NUM_MAP[last4] != raw:
+        dup[last4].append(raw)
+    ACCOUNT_NUM_MAP[last4]      = raw
+    ACCOUNT_NAME_MAP[last4]     = acct["internal_entity"].strip()
+    ACCOUNT_CURRENCY_MAP[last4] = acct["currency"].strip()
+if dup:
+    logging.warning("Duplicate last‐4 in config.accounts: %s", dict(dup))
+assert ACCOUNT_NAME_MAP, "No accounts loaded—check `config.yaml` under `accounts:`"
 
-#here we load in account information to guide LLM parsing.
-acct_path = cfg['paths']['accounts_csv']
-internal_accounts = []
-with open(acct_path) as f:
-    for r in csv.DictReader(f):
-        full = r['internal_account_number']
-        internal_accounts.append({
-            "name": r['internal_entity'],
-            "institution": r.get('institution',''),
-            "full": full,
-            "last4": full[-4:]
-        })
+NAME_TO_LAST4 = { name.lower(): l4 for l4, name in ACCOUNT_NAME_MAP.items() }
 
-
-
-pconf = cfg['parser']
-provider = pconf['provider']
-
-print(f"[llm_parser] provider={provider!r}")
-print(f"[llm_parser] loading HF branch" if provider=="hf" else "")
-
-# Here we build a list of internal account names and numbers
-# to help the LLM parse the email
-# ── Build prompt with account mapping ─────────────────────────────────────
-acct_lines = [
-    f"- {a['name']} ({a['institution']}): acct={a['full']} (last4={a['last4']})"
-    for a in internal_accounts
+REF_LINES = [
+    f"- {ACCOUNT_NAME_MAP[l4]} ({ACCOUNT_NUM_MAP[l4]}) (last4={l4})"
+    for l4 in ACCOUNT_NUM_MAP
 ]
-ACCT_REF = "Here are your internal accounts:\n" + "\n".join(acct_lines)
+ACCT_REF = "Your internal accounts:\n" + "\n".join(REF_LINES)
 
-#print(ACCT_REF)
-#exit()
-# Prompt template
-PROMPT = f"""
-
+# embed schema for the LLM
+schema_block = json.dumps(TXN_SCHEMA, indent=2).replace("{", "{{").replace("}", "}}")
+PROMPT_TMPL = f"""
 {ACCT_REF}
 
+Return ONLY JSON matching the schema.
 
-Extract the following fields as a JSON object (do not output any other text). Synonyms for the data that fills the fields are acceptable but the field names must be exactly as specified. Synonyms are given in square brackets. The fields are:
-- date  (must extract and convert to ISO 8601 format (YYYY-MM-DD)
-- internal_entity:string (name of the account_name or account holder)
-- institution:string (name of the bank corresponding to internal entity)
-- account_number:integer [account id]  (account number of the internal entity)
-- external_entity:string [external account, external account name]
-- amount:float (negative for debit to account number, positive for credit from account number)
-- available_balance:float [balance] (available balance, as in remaining balance, in the account number)
-- currency:string (base currency is South African Rand (ZAR))
-- description:string (Nature of transaction, e.g. "ATM withdrawal", "POS purchase", "EFT payment" with description of reason for transaction if possible, e.g. "EFT payment for groceries")
+<JSON_SCHEMA>
+{schema_block}
+</JSON_SCHEMA>
 
-You must ensure the following:
-- Ensure that if there is no information for a field, you include that field in the JSON with an empty string.
-- Ensure that you do not add any fields that are not in the list above.
-- Enure that you extract the date from the email body first. If not available, then use metadata.
-- Ensure that the amount is a number, not a string.
-- Ensure that if you do not see information for a field, you do not include it in the JSON.
-- Ensure that the JSON is valid and parsable.
-- Ensure that you do not provide any other text in your output, literally only the JSON object. This includes any explanations, comments, notes, tips and your internal thought processes given step by step.
-- Ensure that you do not add any fields that are not in the list above.
-- Ensure that you do not use any abbreviations or short forms of words in your output.
-- Ensure that you do not provide any other text in your output, literally only the JSON object. This includes any explanations, comments, notes, tips and your internal thought processes given step by step.
-
-Here is the email metadata:
-\"\"\"
-{{metadata}}
-\"\"\"
 From: {{from_addr}}
 Subject: {{subject}}
 
-Here is the email body text:
-\"\"\"
-{{body}}
-\"\"\"
+Body:
+\"\"\"{{body}}\"\"\"
 
 JSON:
 """
 
-# Initialize backends
-if provider == "openai":
+# ── Balance extractor ───────────────────────────────────────────────────────
+BALANCE_RE = re.compile(
+    r"""Available\ balance [^\d]{0,20}? (?:R|ZAR)?\s* ([\d\.,]+)""",
+    re.I|re.X,
+)
+def extract_available_balance(text: str) -> float | None:
+    m = BALANCE_RE.search(text)
+    if not m:
+        return None
+    num = m.group(1).replace(",", "")
+    try:
+        return float(num)
+    except ValueError:
+        return None
+
+# ── LLM backends ───────────────────────────────────────────────────────────
+def _init_openai():
     import openai
-    openai.api_key = keyring.get_password(
-        cfg['openai']['keyring_service'], cfg['openai']['keyring_user']
+    client = openai.Client(
+        api_key=keyring.get_password(
+            CFG["openai"]["keyring_service"],
+            CFG["openai"]["keyring_user"],
+        ),
+        base_url=CFG["openai"]["api_base"] or None,
     )
-    if cfg.get('openai', {}).get('api_base'):
-        openai.api_base = cfg['openai']['api_base']
-    MODEL = pconf['openai_model']
+    model_name = PARSER_CFG.get("openai_model") or PARSER_CFG.get("model")
+    def _chat(prompt: str) -> str:
+        return client.chat.completions.create(
+            model=model_name,
+            messages=[{"role":"user","content":prompt}],
+            temperature=PARSER_CFG.get("temperature", 0.0),
+            top_p=1.0,
+            n=1,
+        ).choices[0].message.content
+    return _chat
 
-    def generate(prompt):
-        r = openai.ChatCompletion.create(
-            model=MODEL,
-            messages=[
-                {"role": "system", "content": "You parse bank emails."},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.0
+def _init_llamacpp():
+    llama = Llama(
+        model_path  = PARSER_CFG["model_path"],
+        n_ctx       = PARSER_CFG.get("n_ctx", 2048),
+        temperature = PARSER_CFG.get("temperature", 0.0),
+        seed        = PARSER_CFG.get("seed", 42),
+    )
+    def _chat(prompt: str) -> str:
+        return llama(prompt).choices[0].text
+    return _chat
+
+def _init_hf():
+    quant_cfg = None
+    if (qb := PARSER_CFG.get("quant_bits")):
+        quant_cfg = BitsAndBytesConfig(
+            load_in_4bit         = (qb == 4),
+            bnb_4bit_quant_type  = PARSER_CFG.get("bnb_4bit_quant_type", "nf4"),
+            bnb_double_quant     = PARSER_CFG.get("bnb_double_quant", False),
+            bnb_4bit_compute_dtype = __import__("torch").float16,
         )
-        return r.choices[0].message.content
-
-elif provider == "llamacpp":
-    from llama_cpp import Llama
-    llm = Llama(
-        model_path=pconf['model_path'],
-        n_ctx=pconf.get('n_ctx', 2048),
-        seed=pconf.get('seed', 42)
-    )
-
-    def generate(prompt):
-        r = llm(prompt, temperature=0.0, echo=False)
-        return r['choices'][0]['text']
-
-elif provider == "hf":
-    import torch
-    from transformers import (
-        pipeline as hf_pipeline,
-        AutoTokenizer,
-        AutoModelForCausalLM,
-        BitsAndBytesConfig
-    )
-    print("[llm_parser] Initializing HF backend…")
-
-    # Quant config
-    qb = pconf.get('quant_bits', 8)
-    if qb == 4:
-        bnb_cfg = BitsAndBytesConfig(
-            load_in_4bit=True,
-            bnb_4bit_quant_type=pconf.get('bnb_4bit_quant_type','nf4'),
-            bnb_4bit_use_double_quant=pconf.get('bnb_double_quant',True),
-            bnb_4bit_compute_dtype=getattr(torch, pconf['bnb_4bit_compute_dtype']),
-        )
-    elif qb == 8:
-        bnb_cfg = BitsAndBytesConfig(load_in_8bit=True)
-    else:
-        bnb_cfg = None
-
-    model_id = pconf.get('hf_model_id')
-    if not model_id:
-        raise ValueError("hf_model_id must be set in config under parser")
-
-    # Device logic
-    use_map = (pconf.get('device_map','auto') != 'none')
-    device_map = 'auto' if use_map else None
-    device     = pconf.get('device', -1)
-    dtype      = torch.float16 if (device_map or device>=0) and torch.cuda.is_available() else torch.float32
-
-    print(f"[llm_parser] Loading model {model_id}")
-    model = AutoModelForCausalLM.from_pretrained(
-        model_id,
-        quantization_config=bnb_cfg,
-        device_map=device_map,
-        torch_dtype=dtype,
-        trust_remote_code=True
-    )
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+    model_id = PARSER_CFG["hf_model_id"]
     tokenizer = AutoTokenizer.from_pretrained(model_id)
-
-    pipe_kwargs = {
-        "model": model,
-        "tokenizer": tokenizer,
-        "trust_remote_code": True,
-        "max_new_tokens": pconf['max_new_tokens'],
-        "do_sample": False,
-        "return_full_text": False
-    }
-    if not use_map:
-        print(f"[llm_parser] Pipeline on device {device}")
-        pipe_kwargs["device"] = device
-
-    llm_pipe = hf_pipeline("text-generation", **pipe_kwargs)
-    print("[llm_parser] Huggingface pipeline ready")
-
-    def generate(prompt):
-        out = llm_pipe(prompt)
-        return out[0]['generated_text']
-
-else:
-    raise ValueError(f"Unknown provider: {provider}")
-
-class LLMParser(BankEmailParser):
-    def parse(self, message: dict):
-        # 1) Extract the plain-text body
-        raw_body = ""
-        for part in message['payload'].get('parts', []):
-            if part.get('mimeType') == "text/plain":
-                raw_body = part['body'].get('data',"")
-                break
-        if not raw_body:
-            return []
-
-        # 2) Decode & build prompt
-        body   = base64.urlsafe_b64decode(raw_body).decode('utf-8', errors='ignore')
-        print(f"[llm_parser] BODY >>> {body[:1000]}")
-
-        # 2a) pull out From and Subject
-        headers = { h['name']: h['value'] for h in message['payload']['headers'] }
-        from_addr    = headers.get('From', '')
-        subject      = headers.get('Subject', '')
-        
-        # 2b) optional “metadata” blob if you want to pass both together
-        metadata_str = f"From: {from_addr}\nSubject: {subject}"
-        prompt = PROMPT.format(metadata = metadata_str,
-                                from_addr = from_addr,
-                                subject   = subject,
-                                body=body)
-
-        # 3) Generate JSON text
-        raw_json = generate(prompt).strip()
-        print("[llm_parser] RAW_JSON >>>", repr(raw_json))   # debug
-        print("\n\n\n")
-        print("This is the genuine LLM ouput through the model as a json output")
-        
-        # 4) Ensure it ends with a brace
-        if not raw_json.endswith("}"):
-            raw_json += "}"
-
-        def extract_first_json(raw: str) -> str | None:
-            start = raw.find("{")
-            if start < 0:
-                return None
-            depth = 0
-            for i, ch in enumerate(raw[start:], start):
-                if ch == "{":
-                    depth += 1
-                elif ch == "}":
-                    depth -= 1
-                    if depth == 0:
-                        return raw[start : i+1]
-            return None
-
-        # 5) Parse JSON
-        raw = generate(prompt).strip()
-        # debug
-        print("[llm_parser] RAW >>>", raw.replace("\n"," ") + "...")
-
-        json_text = extract_first_json(raw)
-        if not json_text:
-            print("[llm_parser] no JSON found")
-            return []
-        try:
-            data = json.loads(json_text)
-        except json.JSONDecodeError:
-            return ["Error: JSONDecodeError"]
-        
-
-        # 6) Build Transaction
-        try:
-            dt = datetime.strptime(data['date'], "%Y-%m-%d")
-        except:
-            return ["Error: date parsing error"]
-
-
-        print("Mama we made it")
-        #exit()
-        txn = Transaction(
-            timestamp        = dt,
-            account_name     = data.get('internal_entity', ""),
-            institution     = data.get('institution', ""),
-            account_number   = data.get('account_number', ""),
-            external_entity  = data.get('external_entity', ""),
-            amount           = float(data.get('amount', 0)),
-            available_balance= float(data.get('available_balance', 0)),
-            currency         = data.get('currency', ""),
-            description      = data.get('description', ""),
-            transaction_type = "unclassified",
-            source_email     = next(
-                (h['value'] for h in message['payload']['headers']
-                 if h['name']=="From"), ""),
-            email_id         = message.get('id', "")
+    model     = AutoModelForCausalLM.from_pretrained(
+        model_id,
+        device_map          = PARSER_CFG.get("device_map", "auto"),
+        quantization_config = quant_cfg,
+    )
+    pipe = pipeline("text-generation", model=model, tokenizer=tokenizer)
+    max_tokens = PARSER_CFG.get("max_new_tokens", 512)
+    def _chat(prompt: str) -> str:
+        out = pipe(
+            prompt,
+            max_new_tokens = max_tokens,
+            do_sample      = False,
+            temperature    = 0.0,
+            top_k          = 1,
+            top_p          = 1.0,
         )
-        return [txn]
+        return out[0]["generated_text"]
+    return _chat
+
+CHAT = {"openai": _init_openai, "llamacpp": _init_llamacpp, "hf": _init_hf}[PROVIDER]()
+
+# ── Parser ─────────────────────────────────────────────────────────────────
+class LLMParser:
+    def __init__(self):
+        self.clf = TransactionClassifier()
+
+    def parse(self, msg: dict) -> Transaction:
+        headers   = {h["name"]: h["value"] for h in msg["payload"].get("headers", [])}
+        from_addr = headers.get("From", "")
+        subject   = headers.get("Subject", "")
+        body      = extract_body(msg)
+
+        prompt = PROMPT_TMPL.format(from_addr=from_addr, subject=subject[:120], body=body)
+        data   = self._llm_pass(prompt, body)
+
+        # force & pivot on internal account
+        orig = data.get("account_number","")
+        digits = re.sub(r"\D","",orig)
+        if len(digits)>=4 and (l4:=digits[-4:]) in ACCOUNT_NUM_MAP:
+            forced_acc = ACCOUNT_NUM_MAP[l4]
+            forced_ent = ACCOUNT_NAME_MAP[l4]
+            data["account_number"] = forced_acc
+            data["account_name"]   = forced_ent
+            data["currency"]       = ACCOUNT_CURRENCY_MAP.get(l4, data.get("currency",""))
+            if forced_acc != orig:
+                note = (
+                    f"Use internal_account_number `{forced_acc}` "
+                    f"and internal_entity `{forced_ent}` to re-extract all fields."
+                )
+                data = self._llm_pass(prompt + "\n\n" + note, body)
+
+        # sent-date override
+        try:
+            data["date"] = self._extract_sent_date(msg)
+        except ValueError:
+            logging.warning("Date extraction failed")
+
+        # description fallback
+        if data.get("external_entity"):
+            data["description"] = data["external_entity"]
+
+        # balance fallback
+        if data.get("available_balance") is None:
+            bal = extract_available_balance(body) or extract_available_balance(subject)
+            if bal is not None:
+                data["available_balance"] = bal
+
+        # external→internal swap if merchant matches
+        orig_int, orig_ext = data.get("account_name",""), data.get("external_entity","")
+        for name_lower, l4 in NAME_TO_LAST4.items():
+            if name_lower in (orig_ext or "").lower() and orig_int.lower()!=name_lower:
+                data["account_name"]    = ACCOUNT_NAME_MAP[l4]
+                data["account_number"]  = ACCOUNT_NUM_MAP[l4]
+                data["currency"]        = ACCOUNT_CURRENCY_MAP.get(l4, data.get("currency",""))
+                data["external_entity"] = orig_int
+                break
+
+        # regex fallback if empty
+        if not data:
+            data = regex_dispatch(body)
+            if not data:
+                raise ValueError(f"Unable to extract fields from email {msg.get('id')}")
+
+        # validate *after* date & all overrides
+        validate(data, TXN_SCHEMA)
+        validate_transaction_data(data)
+
+        # build Transaction with `timestamp`, not `date`
+        return Transaction(
+            timestamp          = datetime.strptime(data["date"], "%Y-%m-%d"),
+            account_name       = data["account_name"],
+            account_number     = data["account_number"],
+            institution        = data.get("institution",""),
+            external_entity    = data.get("external_entity",""),
+            amount             = float(data["amount"]),
+            available_balance  = float(data["available_balance"]) if data.get("available_balance") else None,
+            currency           = data.get("currency",""),
+            description        = data.get("description",""),
+            transaction_type   = "unclassified",
+            source_email       = from_addr,
+            email_id           = msg.get("id",""),
+        )
+
+    def parse_text(self, msg: dict, body: str) -> Transaction:
+        # identical to parse(), using PDF‐extracted body
+        data = self.parse(msg)  # or duplicate the same logic, substituting `body`
+        return data
+
+    def _llm_pass(self, prompt: str, body: str) -> dict:
+        raw = CHAT(prompt)
+        # skip prompt’s own schema block
+        idx   = raw.find("</JSON_SCHEMA>")
+        start = raw.find("{", idx + len("</JSON_SCHEMA>")) if idx!=-1 else raw.find("{")
+        if start<0:
+            raise ValueError("No JSON found in LLM response")
+        data, _ = JSONDecoder().raw_decode(raw[start:])
+        return data
+
+    @staticmethod
+    def _extract_sent_date(msg: dict) -> str:
+        for h in msg.get("payload",{}).get("headers",[]):
+            if h.get("name","").lower()=="date":
+                try:
+                    dt = parsedate_to_datetime(h["value"])
+                    return dt.astimezone().strftime("%Y-%m-%d")
+                except:
+                    pass
+        if "internalDate" in msg:
+            ts = int(msg["internalDate"])/1000
+            dt = datetime.fromtimestamp(ts, tz=timezone.utc).astimezone()
+            return dt.strftime("%Y-%m-%d")
+        raise ValueError("No Date header or internalDate")

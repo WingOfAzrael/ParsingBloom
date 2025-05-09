@@ -1,0 +1,44 @@
+[tool.poetry]
+name = "parsingbloom"
+version = "0.2.2"
+description = "Email-to-Fact extractor for banking mailboxes"
+authors = ["Your Name <you@example.com>"]
+packages = [
+  { include = "core" },
+  { include = "parser" },
+  { include = "connectors" },
+  { include = "utils" },
+  { include = "pipeline" },
+  { include = "monitoring" },
+]
+
+[tool.poetry.dependencies]
+python = "^3.10"
+openai = "^1.6"
+tqdm = "^4.66"
+python-dateutil = "^2.9"
+PyYAML = "^6.0"
+google-api-python-client = "^2.130"
+google-auth-httplib2 = "^0.2"
+google-auth-oauthlib = "^1.2"
+pandas = "^2.2"
+sqlalchemy = "^2.0"
+psycopg2-binary = "^2.9"
+snowflake-connector-python = "^3.10"
+keyring = "^25.2"
+pdfplumber = "^0.11"
+PyPDF2 = "^3.0"
+pytesseract = "^0.3"
+pytest = "^8.2"
+transformers = "^4.41"
+accelerate = "^0.30"
+bitsandbytes = {version = "^0.45.5", extras = ["cuda126"]}
+llama-cpp-python = "^0.2"
+apscheduler = "^3.10"
+scipy = "^1.13"
+triton = "^2.0"
+beautifulsoup4 = "^4.13.4"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

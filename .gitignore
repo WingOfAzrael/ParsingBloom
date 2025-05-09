@@ -15,3 +15,13 @@ config/token.pickle
 #ignore access_keys and env things
 access_keys.txt
 environment_things.txt 
+
+#ignore testing scripts
+sample_plots.py
+test_parser.py
+/data/fix_transactions.py
+/core/flagged_tracker.py
+
+
+# ignore pulled invoices suince it is generated
+/Invoices

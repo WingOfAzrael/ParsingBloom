@@ -1,6 +1,29 @@
-gmail:
-  credentials_path: config/credentials.json
-  token_path: config/token.pickle
+# ── Which connector to use ─────────────────────────────────────────────────
+connector: gmail        # currently only 'gmail', but you can add others
+
+connectors:
+  gmail:
+    credentials_path: config/credentials.json
+    token_path:       config/token.pickle
+
+accounts:
+  - internal_account_number: "11663427844"
+    internal_entity:         "Senzo Msutwana"
+    institution:             "Discovery"
+    currency:                "ZAR"
+  - internal_account_number: "16292977375"
+    internal_entity:         "Senzo Msutwana"
+    institution:             "Discovery"
+    currency:                "ZAR"
+  - internal_account_number: "4057425883"
+    internal_entity:         "Civil Projects Engineers"
+    institution:             "ABSA"
+    currency:                "ZAR"
+  - internal_account_number: "9322072897"
+    internal_entity:         "Civil Projects Engineers"
+    institution:             "ABSA"
+    currency:                "ZAR"
+
 
 email_filter:
   use_label: true              # Set to false if you don't want label filtering
@@ -16,17 +39,73 @@ openai:
 paths:
   accounts_csv: config/accounts.csv
   transactions_csv: data/transactions.csv
-  bank_senders_csv: data/bank_senders.csv
+  run_folder: data/runs
   metadata_csv: data/metadata.csv
   runs_csv: data/runs.csv
   flagged_csv: data/flagged_messages.csv
   invoices_dir: Invoices
 
+
+
+# This is a list of synonyms for the fields in the transactions table. This helps with parsing when people use different terms for the same thing.
+synonyms:
+  date:
+    - trans_date
+    - date_of_transaction
+    - txn_date
+  account_name:
+    - acct_name
+    - account
+    - account_title
+  account_number:
+    - acct_number
+    - account_no
+    - acc_num
+  internal_entity:
+    - Payment made by
+    - Payment made from
+    - Paid from
+    - “Payment originated from”
+  institution:
+    - bank
+    - bank_name
+  external_entity:
+    - payee
+    - recipient
+    - merchant
+    - vendor
+    - Payment made to
+    - Paid to
+    - “Beneficiary”
+    - “Payment received by”
+  description:
+    - narrative
+    - desc
+    - details
+  amount:
+    - amt
+    - value
+    - transaction_amount
+    - for the amount of
+  currency:
+    - curr
+    - currency_code
+  available_balance:
+    - balance
+    - avail_balance
+    - available
+
+
 scraper:
   initial_start_date: "2023-01-01"
   overlap_hours: 1
-  max_results: 500
+  max_results: 100 
   query: "subject:transaction"
+  parse_pdfs: false      # if false, any PDF attachments will be skipped
+  save_attachments: true           # turn off if you don't need PDFs to be saved
+  pdf_password: "201766138207"        # your 13-digit ID number
+
+
 
 parser:
   provider: "hf"                     # one of: openai | llamacpp | hf
@@ -49,7 +128,7 @@ parser:
 
   #GPU
   device_map: "auto"    # or "none"
-  device: 0            # -1 for CPU, or 0 for GPU0
+  device: 0            # -1 for CPU (incl HPC), or 0 for GPU0
 
 database:
   type: "postgres"
@@ -59,4 +138,7 @@ database:
   user: "emailagent"
   schema: "public"
   table: "transactions"
-  backup_interval_days: 14
+
+scheduler:
+  interval: "daily"                # daily | hourly | cron
+  cron_expr: "0 3 * * *"           # used if interval == cron

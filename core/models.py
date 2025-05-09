@@ -1,16 +1,17 @@
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Optional
 
 @dataclass
 class Transaction:
-    transaction_id: int = None
+    transaction_id: Optional[int] = None
     timestamp: datetime = None
     account_name: str = ""
-    institution: str = ""
     account_number: str = ""
+    institution: str = ""
     external_entity: str = ""
     amount: float = 0.0
-    available_balance: float = 0.0
+    available_balance: Optional[float] = None
     currency: str = ""
     description: str = ""
     transaction_type: str = ""    # personal / business / unclassified
@@ -18,7 +19,7 @@ class Transaction:
     email_id: str = ""
     run_id: str = ""             # LINK to scraping run
 
-    def to_dict(self):
+    def to_dict(self) -> dict:
         return {
             "transaction_id": self.transaction_id,
             "date": self.timestamp.strftime("%Y-%m-%d"),
@@ -27,11 +28,11 @@ class Transaction:
             "institution": self.institution,
             "external_entity": self.external_entity,
             "amount": self.amount,
-            "available_balance": self.available_balance,  # Placeholder for available balance
+            "available_balance": self.available_balance,
             "currency": self.currency,
             "description": self.description,
             "transaction_type": self.transaction_type,
             "source_email": self.source_email,
             "email_id": self.email_id,
-            "run_id": self.run_id
+            "run_id": self.run_id,
         }

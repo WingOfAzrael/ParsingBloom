@@ -1,8 +1,9 @@
 import csv
 import yaml
+from config.config_loader import load_config
 
 def build_gmail_query(config_path="config/config.yaml"):
-    cfg = yaml.safe_load(open(config_path))
+    cfg = load_config(open(config_path))
     filter_cfg = cfg.get("email_filter", {})
 
     use_label = filter_cfg.get("use_label", False)

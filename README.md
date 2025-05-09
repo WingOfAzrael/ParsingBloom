@@ -1,6 +1,27 @@
 # ParsingForge
 
-ParsingForge is a proof-of-concept pipeline that turns banking emails into analytics-ready transaction records. The whole idea of ParsingForge is to showcase the use of open-source transformer-based models (LLMs) in the context of building automated data pipelines that produce analytics-ready data.
+Version: 0.2.1
+
+ParsingForge is a proof-of-concept pipeline that turns banking emails into analytics-ready transaction records. The whole idea of ParsingForge is to showcase the use of open-source transformer-based models (LLMs) in the context of building automated data pipelines that produce analytics-ready data. The key consideration is that the system should provide deterministic parsing of either email bodies or invoices into datasets. 
+
+
+
+## Quick start
+
+```bash
+
+chmod +x deploy/local_deploy.sh (to set permisions for shell script to be executable)
+bash deploy/local_deploy.sh
+
+    Requires: Python 3.10 toolchain, Hugging Face token.
+
+Docker
+
+export HF_API_TOKEN=hf_xxx
+bash deploy/docker_deploy.sh
+
+Runs an hourly scheduler inside the container.
+```
 
 
 ## Full explanation of system behavior
@@ -30,7 +51,7 @@ ParsingForge is a proof-of-concept pipeline that turns banking emails into analy
 - **Huggingface transformers**: In particular, "meta-llama/Llama-3.2-3B-Instruct", for LLM parsing. Capabilities for OpenAI, llama-cpp-python APIs are built-in but untested. 
 - **The rest**: Pretty much standard python libraries for various tasks. 
 
-## Deployment instructions
+## Manual deployment instructions (if quickstart is too convenient)
 
 Note: System built and tested on a Unix-based OS, so use a Virtual Machine (VM) to deploy in the following way if on Windows.
 
