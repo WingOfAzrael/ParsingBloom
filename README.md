@@ -1,8 +1,8 @@
-# ParsingForge
+# ParsingBloom
 
 Version: 0.2.1
 
-ParsingForge is a proof-of-concept pipeline that turns banking emails into analytics-ready transaction records. The whole idea of ParsingForge is to showcase the use of open-source transformer-based models (LLMs) in the context of building automated data pipelines that produce analytics-ready data. The key consideration is that the system should provide deterministic parsing of either email bodies or invoices into datasets. 
+ParsingBloom is a proof-of-concept pipeline that turns banking emails into analytics-ready transaction records. The whole idea of ParsingBloom is to showcase the use of open-source transformer-based models (LLMs) in the context of building automated data pipelines that produce analytics-ready data. The key consideration is that the system should provide deterministic parsing of either email bodies or invoices into datasets. 
 
 
 
@@ -57,8 +57,8 @@ Note: System built and tested on a Unix-based OS, so use a Virtual Machine (VM) 
 
 1. **Clone the repo and install required modules**  
    <pre markdown> bash:
-    git clone https://github.com/you/ParsingForge.git
-    cd ParsingForge
+    git clone https://github.com/you/ParsingBloom.git
+    cd ParsingBloom
     </pre>
 
     Create a Python virtual environment & install the dependencies
