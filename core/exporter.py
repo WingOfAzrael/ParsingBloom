@@ -19,36 +19,40 @@ New in this version:
 
 from __future__ import annotations
 
+"""
+TransactionExporter
+-------------------
+Responsible for appending new transactions into your master CSV,
+assigning incrementing IDs, and snapshotting per‐run files.
+"""
+
 import csv
-import heapq
-from collections import defaultdict
-from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Set
+from collections import defaultdict
+import heapq
+from datetime import datetime
 
 from core.models import Transaction
 from config.config_loader import load_config
 
-
 class TransactionExporter:
-    # ------------------------------------------------------------------ #
-    # Construction                                                        #
-    # ------------------------------------------------------------------ #
     def __init__(self) -> None:
-        cfg = load_config()["paths"]
+        # Load paths via Pydantic config
+        cfg   = load_config()
+        paths = cfg.paths
 
-        self.master: Path   = Path(cfg["transactions_csv"])
-        self.run_dir: Path  = Path(cfg["run_folder"])
-        self.runs_csv: Path = Path(cfg["runs_csv"])
-        self.flag_csv: Path = Path(cfg["flagged_csv"])
-        self.meta_csv: Path = Path(cfg["metadata_csv"])
+        self.master    = Path(paths.transactions_csv)
+        self.run_dir   = Path(paths.invoice_dir)
+        self.runs_csv  = Path(paths.runs_csv)
+        self.flag_csv: Path = Path(paths.flagged_csv)
+        self.meta_csv: Path = Path(paths.metadata_csv)
 
-        for p in (self.master, self.runs_csv, self.flag_csv, self.meta_csv):
+        # Ensure directories exist
+        for p in (self.master, self.runs_csv):
             p.parent.mkdir(parents=True, exist_ok=True)
 
-        self._ensure_metadata()
-
-        # canonical header (14 cols)
+        # Canonical 14-column header
         self._columns: List[str] = [
             "transaction_id",
             "date",
@@ -75,6 +79,43 @@ class TransactionExporter:
         # cache Gmail IDs to prevent dupes
         self._processed_ids: Set[str] = self._load_processed_ids()
 
+    def export_batch(self, txns: List[Dict]) -> int:
+        """
+        Append this batch of transaction dicts into transactions.csv,
+        auto-assigning transaction_id = max_existing_id + incremental index.
+        Returns number of rows written.
+        """
+        # Find current max ID
+        max_id = 0
+        if self.master.exists() and self.master.stat().st_size > 0:
+            with self.master.open(newline="") as f:
+                reader = csv.DictReader(f)
+                if "transaction_id" in reader.fieldnames:
+                    for row in reader:
+                        try:
+                            tid = int(row["transaction_id"])
+                            if tid > max_id:
+                                max_id = tid
+                        except ValueError:
+                            continue
+
+        # Prepare rows with new IDs
+        out_rows = []
+        for idx, rec in enumerate(txns, start=1):
+            rec["transaction_id"] = max_id + idx
+            out_rows.append(rec)
+
+        # Append to master CSV
+        with self.master.open("a", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=self._columns)
+            # Write header if file was empty
+            if f.tell() == 0:
+                writer.writeheader()
+            writer.writerows(out_rows)
+
+        # Return count of appended rows
+        return len(out_rows)
+    
     # ------------------------------------------------------------------ #
     # Duplicate detection                                                 #
     # ------------------------------------------------------------------ #
@@ -105,7 +146,7 @@ class TransactionExporter:
 
         # 2) Flatten & sort the new batch
         new_batch = [t for lst in buckets.values() for t in lst]
-        new_batch.sort(key=lambda r: r.timestamp)
+        new_batch.sort(key=lambda r: r.date)
 
         # ── assign new transaction_id ───────────────────────────────────────
         max_id = 0
@@ -133,7 +174,7 @@ class TransactionExporter:
                     pass
             last_date_str = last_row["date"] if last_row else ""
             # compare ISO strings
-            if new_batch and new_batch[0].timestamp.strftime("%Y-%m-%d") >= last_date_str:
+            if new_batch and new_batch[0].date.strftime("%Y-%m-%d") >= last_date_str:
                 # fast‐append (safe because entire new_batch is ≥ last existing date)
                 self._append(self.master, new_batch, header_always=False)
             else:
@@ -212,7 +253,7 @@ class TransactionExporter:
     # ------------------------------------------------------------------ #
     @staticmethod
     def _impute_available_balance(txns: List[Transaction]) -> None:
-        txns.sort(key=lambda r: r.timestamp)
+        txns.sort(key=lambda r: r.date)
         prev = None
         for r in txns:
             if r.available_balance is None and prev is not None:
@@ -241,7 +282,7 @@ class TransactionExporter:
                 for key in self._columns:
                     rec.setdefault(key, "")
                 # fallback for date and run_id
-                rec["date"] = rec.get("date") or t.timestamp.strftime("%Y-%m-%d")
+                rec["date"] = rec.get("date") or t.date.strftime("%Y-%m-%d")
                 rec["run_id"] = rec.get("run_id") or t.run_id
                 # blank out null strings
                 for col in self._string_cols:

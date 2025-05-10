@@ -2,8 +2,16 @@
 
 Version: 0.2.1
 
-ParsingBloom is a proof-of-concept pipeline that turns banking emails into analytics-ready transaction records. The whole idea of ParsingBloom is to showcase the use of open-source transformer-based models (LLMs) in the context of building automated data pipelines that produce analytics-ready data. The key consideration is that the system should provide deterministic parsing of either email bodies or invoices into datasets. 
+ParsingBloom is a proof-of-concept pipeline that turns banking emails into analytics-ready transaction records. The whole idea of ParsingBloom is to showcase the use of open-source transformer-based models (LLMs) in the context of building automated data pipelines that produce analytics-ready data. The key considerations:
 
+1. The system should provide deterministic parsing of information. The systems reliability depends almost entirely on this determinism.
+2. Connector abstraction so you can plug in Gmail, banking APIs, etc (Gmail currently integrated, the rest is a work-in-progress)
+3. Hybrid LLM-first + regex-fallback for maximum extraction reliability
+
+The systems integration of LLMs means that, as capabilities of these models improve, so do the parsing abilities of ParsingBloom. In a sense, its current capabilities grow, and new ones may emerge. Emergence is the higher order ontological layer. 
+Failure for the LLMs to parse information rely on a fail-safe regex layer. This provides the deterministic safety net to guide the system. Reduction is the lower order ontological layer.
+
+The merger of these layers defines the philosophy of this system. A blend of dreams and confinement.
 
 
 ## Quick start
@@ -11,7 +19,15 @@ ParsingBloom is a proof-of-concept pipeline that turns banking emails into analy
 ```bash
 
 chmod +x deploy/local_deploy.sh (to set permisions for shell script to be executable)
+<pre markdown> 
 bash deploy/local_deploy.sh
+</pre>
+
+- --gpus
+    Enable CUDA/GPU flags (if your container or host has Nvidia drivers).
+
+- --force
+    Reinstall dependencies and overwrite any existing build artifacts.
 
     Requires: Python 3.10 toolchain, Hugging Face token.
 
@@ -20,7 +36,7 @@ Docker
 export HF_API_TOKEN=hf_xxx
 bash deploy/docker_deploy.sh
 
-Runs an hourly scheduler inside the container.
+Runs an hourly scheduler inside the container. (same options as local_deploy.sh)
 ```
 
 

@@ -1,34 +1,39 @@
-from dataclasses import dataclass
-from datetime import datetime
-from typing import Optional
+# File: core/models.py
 
-@dataclass
-class Transaction:
+from decimal import Decimal
+from datetime import date
+from typing import Optional
+from pydantic import BaseModel, constr
+
+
+class Transaction(BaseModel):
     transaction_id: Optional[int] = None
-    timestamp: datetime = None
-    account_name: str = ""
-    account_number: str = ""
-    institution: str = ""
-    external_entity: str = ""
-    amount: float = 0.0
-    available_balance: Optional[float] = None
-    currency: str = ""
-    description: str = ""
-    transaction_type: str = ""    # personal / business / unclassified
-    source_email: str = ""
-    email_id: str = ""
-    run_id: str = ""             # LINK to scraping run
+    date: date
+    internal_account_number: constr(min_length=1)
+    internal_entity: constr(min_length=1)
+    institution: constr(min_length=1)
+    external_entity: constr(min_length=1)
+    amount: Decimal
+    available_balance: Optional[Decimal]
+    currency: constr(regex=r"^[A-Z]{3}$")
+    description: constr(min_length=1)
+    transaction_type: constr(min_length=1)
+    source_email: constr(min_length=1)
+    email_id: constr(min_length=1)
+    run_id: constr(min_length=1)
 
     def to_dict(self) -> dict:
+        """
+        Export exactly in your CSV schema format.
+        """
         return {
-            "transaction_id": self.transaction_id,
-            "date": self.timestamp.strftime("%Y-%m-%d"),
-            "internal_account_number": self.account_number,
-            "internal_entity": self.account_name,
+            "date": self.date.isoformat(),
+            "internal_account_number": self.internal_account_number,
+            "internal_entity": self.internal_entity,
             "institution": self.institution,
             "external_entity": self.external_entity,
-            "amount": self.amount,
-            "available_balance": self.available_balance,
+            "amount": str(self.amount),
+            "available_balance": str(self.available_balance or ""),
             "currency": self.currency,
             "description": self.description,
             "transaction_type": self.transaction_type,

@@ -1,22 +1,23 @@
-# ===== connectors/base.py =====
-from typing import Protocol, Any, List, Dict
+# File: parser/base.py
 
-class Connector(Protocol):
-    def authenticate(self) -> None:
-        """Perform any auth (OAuth, tokens, API keys)."""
+from abc import ABC, abstractmethod
+from typing import Optional, Dict, Any
+from core.models import Transaction
 
-    def fetch_messages(
-        self,
-        *,
-        since: str,
-        max_results: int,
-        query: str
-    ) -> List[Dict[str, Any]]:
-        """Return a list of raw message dicts."""
 
-    def fetch_pdf_attachment(
-        self,
-        msg: Dict[str, Any],
-        attachment_id: str
-    ) -> bytes | None:
-        """Download raw bytes of a PDF attachment, or None."""
+class Parser(ABC):
+    """
+    Abstract base class for parsers.
+    Each parser must implement parse(), which takes:
+      - raw_email: the Gmail API message dict
+      - pdf_text: optional extracted PDF text
+    and returns a validated Transaction.
+    """
+
+    @abstractmethod
+    def parse(self, raw_email: Dict[str, Any], pdf_text: Optional[str] = None) -> Transaction:
+        """
+        Parse the given raw email dict (and optional PDF text)
+        into a Transaction object.
+        """
+        raise NotImplementedError("Parser subclasses must implement parse()")
