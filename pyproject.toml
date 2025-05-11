@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "parsingbloom"
-version = "0.3.1"
+version = "0.3.4"
 description = "Email-to-Fact extractor for banking mailboxes"
 authors = ["Your Name <you@example.com>"]
 packages = [
@@ -19,6 +19,8 @@ apscheduler = "^3.10"
 beautifulsoup4 = "^4.13.4"
 bitsandbytes = { version = "^0.45.5", extras = ["cuda126"] }
 celery = "^5.3"
+datasets = "^2.12.0"                  # ← for HF Dataset batching
+huggingface-hub = "^0.23.0"           # ← optional helper for models
 google-api-python-client = "^2.130"
 google-auth-httplib2 = "^0.2"
 google-auth-oauthlib = "^1.2"
@@ -41,7 +43,7 @@ snowflake-connector-python = "^3.10"
 sqlalchemy = "^2.0"
 triton = "^2.0"
 transformers = "^4.41"
-tqdm = "^4.66"
+tqdm = "^4.66"                         # ← progress bars in parse_batch
 pytesseract = "^0.3"
 
 [build-system]

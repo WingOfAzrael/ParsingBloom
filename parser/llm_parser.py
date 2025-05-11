@@ -10,10 +10,13 @@ import json
 import logging
 import re
 from collections import defaultdict
+from datasets import Dataset
 from datetime import datetime, timezone
 from decimal import Decimal
-from json import JSONDecoder
+from json import JSONDecoder, JSONDecodeError
 from typing import Dict, Optional
+from typing import Dict, Any, Optional, Literal, Union, List
+from tqdm.auto import tqdm
 
 import keyring
 from email.utils import parsedate_to_datetime
@@ -124,7 +127,14 @@ def _init_llamacpp():
     return lambda prompt: llama(prompt).choices[0].text
 
 def _init_hf():
-    # build 4-bit quant config if desired
+    from transformers import (
+        AutoModelForCausalLM,
+        AutoTokenizer,
+        BitsAndBytesConfig,
+        pipeline,
+    )
+
+    # 1) Build BitsAndBytes 4-bit config if desired
     quant_cfg = None
     if (qb := PARSER_CFG.quant_bits):
         quant_cfg = BitsAndBytesConfig(
@@ -133,39 +143,216 @@ def _init_hf():
             bnb_double_quant       = PARSER_CFG.bnb_double_quant,
             bnb_4bit_compute_dtype = PARSER_CFG.bnb_4bit_compute_dtype,
         )
-    from transformers import AutoModelForCausalLM, AutoTokenizer
+
+    # 2) Load tokenizer & model
     tokenizer = AutoTokenizer.from_pretrained(PARSER_CFG.hf_model_id)
     model     = AutoModelForCausalLM.from_pretrained(
         PARSER_CFG.hf_model_id,
         device_map          = PARSER_CFG.device_map,
         quantization_config = quant_cfg,
     )
-    pipe = pipeline("text-generation", model=model, tokenizer=tokenizer)
-    def _chat(prompt: str) -> str:
-        out = pipe(
-            prompt,
-            max_new_tokens = PARSER_CFG.max_new_tokens,
-            do_sample      = False,
-            temperature    = PARSER_CFG.temperature,
-        )
-        return out[0]["generated_text"]
+
+    # 3) Ensure pad_token_id is set (required for batching)
+    #    Prefer the tokenizer's own eos_token_id if present.
+    pad_id = (
+        tokenizer.pad_token_id
+        or getattr(tokenizer, "eos_token_id", None)
+        or getattr(model.config, "eos_token_id", None)
+    )
+    if pad_id is None:
+        raise ValueError("Cannot find pad_token_id or eos_token_id on tokenizer/model")
+    tokenizer.pad_token_id      = pad_id
+    tokenizer.padding_side      = getattr(tokenizer, "padding_side", "left")
+    model.config.pad_token_id   = pad_id
+
+    # 4) Create the pipeline
+    hf_pipeline = pipeline(
+        "text-generation",
+        model=model,
+        tokenizer=tokenizer,
+    )
+
+    if hf_pipeline.tokenizer.pad_token_id is None:
+        hf_pipeline.tokenizer.pad_token_id = model.config.eos_token_id
+    # force left-padding to silence the decoder-only warning
+    hf_pipeline.tokenizer.padding_side = "left"
+
+    # 5) Return a flexible chat function
+    def _chat(
+        prompts: Union[str, List[str]],
+        **generation_kwargs
+    ) -> Union[str, List[str]]:
+        defaults = {
+            "max_new_tokens":   PARSER_CFG.max_new_tokens,
+            "do_sample":        False,
+            "temperature":      PARSER_CFG.temperature,
+            "return_full_text": True,
+        }
+        gen_kwargs = {**defaults, **generation_kwargs}
+
+        results = hf_pipeline(prompts, **gen_kwargs)
+        #texts   = [r["generated_text"] for r in results]
+        if isinstance(prompts, str):
+            # pick the first generation candidate
+            return results[0]["generated_text"]
+        else:
+            # for each prompt, pick its first generation
+            return [ cand_list[0]["generated_text"] for cand_list in results ]
+
     return _chat
 
+
 CHAT = {
-    "openai":     _init_openai,
-    "llama-cpp":  _init_llamacpp,
-    "huggingface":_init_hf,
+    "openai":      _init_openai,
+    "llama-cpp":   _init_llamacpp,
+    "huggingface": _init_hf,
 }[PROVIDER]()
 
-# ── Parser ─────────────────────────────────────────────────────────────────
+
+
+
+
 class LLMParser:
-    def __init__(self):
-        self.clf = TransactionClassifier()
+
+    #Parse in batches. Make good use of parallel processing.
+    def parse_batch(
+        self,
+        msgs: List[Dict],
+        pdf_texts: List[Optional[str]],
+        run_id: str = "",
+    ) -> List[Transaction]:
+        
+        logger = logging.getLogger(__name__)
+        dec = JSONDecoder()
+
+        # 1) Build records & prompts
+        records = []
+        for msg, pdf in zip(msgs, pdf_texts):
+            headers = {h["name"]: h["value"] for h in msg["payload"].get("headers", [])}
+            body_text = extract_body(msg)
+            if pdf:
+                body_text += "\n\n" + pdf
+            prompt = PROMPT_TMPL.format(
+                from_addr=headers.get("From", ""),
+                subject=headers.get("Subject", "")[:120],
+                body=body_text
+            )
+            records.append({"msg": msg, "prompt": prompt})
+
+        prompts = [r["prompt"] for r in records]
+        batch_size = PARSER_CFG.hf_batch_size
+
+        # 2) First pass: true GPU batching in chunks
+        all_outputs: List[Union[str, Dict]] = []
+        for i in tqdm(
+            range(0, len(prompts), batch_size),
+            desc="Parsing emails",
+            unit="batch"
+        ):
+            chunk = prompts[i : i + batch_size]
+            outs = CHAT(
+                chunk,
+                max_new_tokens=PARSER_CFG.max_new_tokens,
+                do_sample=False,
+                temperature=PARSER_CFG.temperature,
+                return_full_text=False,
+                batch_size=len(chunk)   # enforce a single GPU forward of this whole chunk
+            )
+            all_outputs.extend(outs)
+
+        # 3) Decode or mark for fallback
+        txns: List[Optional[Transaction]] = [None] * len(records)
+        marker = "</JSON_SCHEMA>"
+        fallback_idxs: List[int] = []
+
+        for idx, (rec, out) in enumerate(zip(records, all_outputs)):
+            raw = out if isinstance(out, str) else out.get("generated_text", "")
+            pos = raw.find(marker)
+            start = raw.find("{", pos + len(marker)) if pos != -1 else -1
+
+            if pos == -1 or start == -1:
+                logger.warning(
+                    "Missing or malformed JSON_SCHEMA marker; scheduling fallback",
+                    extra={"raw": raw[:200]}
+                )
+                fallback_idxs.append(idx)
+                continue
+
+            snippet = raw[start:]
+            try:
+                data, _ = dec.raw_decode(snippet)
+                # direct constructor retains Pydantic parsing of date, decimals, etc.
+                txns[idx] = Transaction(**{**data, "run_id": run_id})
+            except (JSONDecodeError, Exception) as e:
+                logger.warning(
+                    "Error decoding batch output; scheduling fallback",
+                    extra={"snippet": snippet[:200], "error": str(e)}
+                )
+                fallback_idxs.append(idx)
+
+        # 4) Single batched fallback for all missing records
+        if fallback_idxs:
+            fb_prompts = [records[i]["prompt"] for i in fallback_idxs]
+            fb_outputs = CHAT(
+                fb_prompts,
+                max_new_tokens=PARSER_CFG.max_new_tokens,
+                do_sample=False,
+                temperature=PARSER_CFG.temperature,
+                return_full_text=False,
+                batch_size=len(fb_prompts)
+            )
+            for idx, fb_out in zip(fallback_idxs, fb_outputs):
+                fb_raw = fb_out if isinstance(fb_out, str) else fb_out.get("generated_text", "")
+                # find first JSON brace
+                brace = fb_raw.find("{")
+                data, _ = dec.raw_decode(fb_raw[brace:])
+
+                # now build with all required fields
+                msg = records[idx]["msg"]
+                headers = {h["name"]: h["value"] for h in msg["payload"].get("headers", [])}
+                # convert date string → date if needed
+                date_val = data.get("date")
+                if isinstance(date_val, str):
+                    date_val = datetime.strptime(date_val, "%Y-%m-%d").date()
+
+                amount_val = Decimal(str(data["amount"]))
+                bal_val = data.get("available_balance")
+                bal_dec = Decimal(str(bal_val)) if bal_val is not None else None
+
+                txns[idx] = Transaction(
+                    date=date_val,
+                    internal_account_number=data["account_number"],
+                    internal_entity=data["account_name"],
+                    institution=data.get("institution", ""),
+                    external_entity=data.get("external_entity", ""),
+                    amount=amount_val,
+                    available_balance=bal_dec,
+                    currency=data.get("currency", ""),
+                    description=data.get("description", ""),
+                    transaction_type="unclassified",
+                    source_email=headers.get("From", ""),
+                    email_id=msg.get("id", ""),
+                    run_id=run_id,
+                )
+
+        # 5) All entries filled
+        return txns  # type: ignore
+
+
+
+    def parse_text(self, msg: Dict, body: str, run_id: str = "") -> Transaction:
+
+
+        # inject the "body" (PDF text or fallback) into the message
+        msg_copy = dict(msg, **{"_injected_body": body})
+        # forward both the injected body and run_id into parse()
+        return self.parse(msg_copy, body, run_id)
+
 
     def parse(
         self,
         msg: Dict,
-        pdf_text: Optional[str] = Optional[str],
+        pdf_text: Optional[str] = None,
         run_id: str = ""
     ) -> Transaction:
         headers   = {h["name"]: h["value"] for h in msg["payload"].get("headers", [])}
@@ -242,22 +429,13 @@ class LLMParser:
             transaction_type        = "unclassified",
             source_email            = from_addr,
             email_id                = msg.get("id", ""),
-            run_id                  = run_id,    # ← see next section
-            )
+            run_id                  = run_id,
+        )
 
-    def parse_text(self, msg: Dict, body: str) -> Transaction:
-        """
-        Identical to parse(), but allows an extracted-PDF body to be passed in.
-        """
-        # temporarily inject into msg and re-call parse()
-        msg_copy = dict(msg, **{"_injected_body": body})
-        return self.parse(msg_copy)
 
     def _llm_pass(self, prompt: str) -> dict:
-        """
-        Runs the LLM and JSON-decodes everything *after* the </JSON_SCHEMA> tag,
-        just like the old code did.
-        """
+        
+        # Runs the LLM and JSON-decodes everything *after* the </JSON_SCHEMA> tag
         raw = CHAT(prompt)
         idx   = raw.find("</JSON_SCHEMA>")
         start = raw.find("{", idx + len("</JSON_SCHEMA>")) if idx != -1 else raw.find("{")
@@ -268,9 +446,7 @@ class LLMParser:
 
     @staticmethod
     def _extract_sent_date(msg: Dict) -> str:
-        """
-        Exactly as before—preferring the Date header, then internalDate.
-        """
+        
         for h in msg.get("payload", {}).get("headers", []):
             if h.get("name", "").lower() == "date":
                 try:

@@ -108,6 +108,9 @@ class ParserConfig(BaseModel):
     device_map: str  = Field("auto", description='"auto" or "none"')
     device:     int  = Field(0,      description="GPU index; 0 = first GPU, -1 = CPU")
 
+    #Batch loading size
+    hf_batch_size: int  = Field(1, description="Batch size for local models")
+
     # Generation parameters
     max_tokens:       int    = Field(512,  description="OpenAI max_tokens or HF max_length")
     max_new_tokens:   int    = Field(512,  description="HF max_new_tokens")

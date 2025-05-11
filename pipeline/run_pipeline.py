@@ -77,6 +77,38 @@ def run(start_date: str | None = None,
             dup += 1
             continue
 
+    # If we're on HuggingFace provider, do one big batch
+    if CFG.parser.provider.lower() == "huggingface":
+        # optionally fetch PDFs in bulk
+        pdfs = []
+        if CFG.scraper.parse_pdfs:
+            for m in msgs:
+                aid = (m.get("payload",{}).get("parts",[{}])[0].get("body",{}).get("attachmentId"))
+                pdfs.append(connector.fetch_pdf_attachment(m, aid))
+        else:
+            pdfs = [None] * len(msgs)
+
+        txns = parser.parse_batch(msgs, pdfs, run_id)
+        # dedupe & sample
+        unique = []
+        for t in txns:
+            if t.email_id not in processed_ids:
+                processed_ids.add(t.email_id)
+                unique.append(t)
+        txns = unique
+        dup = len(msgs) - len(txns)
+        fail = 0
+        sample = [t.dict() for t in txns[:3]]
+    else:
+        # original one-by-one path
+        txns, sample  = [], []
+        dup = fail = 0
+        for m in msgs:
+            mid = m["id"]
+            if mid in processed_ids:
+                dup += 1
+                continue
+
         # **always build headers here, so 'hdr' is available below**
         hdr = {h["name"]: h["value"] for h in m["payload"].get("headers", [])}
 
@@ -94,7 +126,7 @@ def run(start_date: str | None = None,
                 f"parse: {e}"
             )
             fail += 1
-            continue
+            
 
         # classify + bank override
         txn.transaction_type = classifier.classify(txn)

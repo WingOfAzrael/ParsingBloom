@@ -10,6 +10,7 @@ from google.auth.transport.requests import Request
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 
+from typing import List, Dict, Any, Optional
 from connectors.base import Connector
 from config.config_loader import ConnectorConfig, load_config
 
@@ -67,75 +68,94 @@ class GmailConnector(Connector):
         query: str
     ) -> List[Dict[str, Any]]:
         """
-        since: YYYY-MM-DD
-        max_results & query must be provided by caller (e.g. CFG.scraper)
+        Fetch up to `max_results` messages matching `query` since `since`.
+        Paginates through Gmail's list API (max 500 IDs per call).
         """
-        logging.getLogger(__name__).info(
+        logger = logging.getLogger(__name__)
+        logger.info(
             "Starting fetch_messages",
             extra={"since": since, "max_results": max_results, "query": query}
         )
-        # Load global filter settings
-        cfg = load_config()
-        ef = cfg.email_filter
 
+        # Global email-filter settings
+        cfg = load_config()
+        ef  = cfg.email_filter
+
+        # Build Gmail q-string
         q_parts: List[str] = []
-        # Label filter
         if ef.use_label and ef.label_name:
             q_parts.append(f"label:{ef.label_name}")
-
-        # Domain filter
         if ef.use_domain_filter and ef.sender_csv:
             try:
                 with open(ef.sender_csv, newline='') as f:
-                    reader = csv.reader(f)
-                    domains = [row[0].strip() for row in reader if row]
+                    domains = [row[0].strip() for row in csv.reader(f) if row]
                 if domains:
-                    domain_query = " OR ".join(f"from:{d}" for d in domains)
-                    q_parts.append(f"({domain_query})")
+                    domain_q = " OR ".join(f"from:{d}" for d in domains)
+                    q_parts.append(f"({domain_q})")
             except Exception as e:
-                logging.getLogger(__name__).warning(
+                logger.warning(
                     "Failed loading sender_csv for domain filter",
                     extra={"error": str(e), "file": str(ef.sender_csv)}
                 )
-
-        # Standard query and date filters
         if query:
             q_parts.append(query)
         if since:
             q_parts.append(f"after:{since}")
 
-        params: Dict[str, Any] = {"userId": "me", "maxResults": max_results}
+        params: Dict[str, Any] = {
+            "userId": "me",
+            # Gmail list() honors up to 500; we'll page if max_results > 500
+            "maxResults": min(max_results, 500)
+        }
         if q_parts:
             params["q"] = " ".join(q_parts)
 
-        resp = self.service.users().messages().list(**params).execute()
-        ids  = resp.get("messages", [])
-        logging.getLogger(__name__).info(
-            "Listed message IDs",
-            extra={"count": len(ids), "query": params.get("q")} 
-        )
+        all_msgs: List[Dict[str, Any]] = []
+        next_token: Optional[str] = None
 
-        full_msgs: List[Dict[str,Any]] = []
-        for idx, m in enumerate(ids, start=1):
-            msg = (
-                self.service.users()
-                            .messages()
-                            .get(userId="me", id=m["id"], format="full")
-                            .execute()
-            )
-            full_msgs.append(msg)
-            logging.getLogger(__name__).debug(
-                "Fetched single message",
-                extra={"index": idx, "id": m["id"]}
+        while True:
+            if next_token:
+                params["pageToken"] = next_token
+
+            resp = self.service.users().messages().list(**params).execute()
+            ids = resp.get("messages", [])
+            logger.info(
+                "Listed message IDs",
+                extra={"count": len(ids), "query": params.get("q")}
             )
 
-        return full_msgs
+            # Fetch each message
+            for m in ids:
+                if len(all_msgs) >= max_results:
+                    break
+                msg = (
+                    self.service.users()
+                                .messages()
+                                .get(userId="me", id=m["id"], format="full")
+                                .execute()
+                )
+                all_msgs.append(msg)
+                logger.debug(
+                    "Fetched single message",
+                    extra={"index": len(all_msgs), "id": m["id"]}
+                )
+
+            # Stop if we reached the user’s limit
+            if len(all_msgs) >= max_results:
+                break
+
+            # Otherwise, continue if there’s another page
+            next_token = resp.get("nextPageToken")
+            if not next_token:
+                break
+
+        return all_msgs
 
     def fetch_pdf_attachment(
         self,
         msg: Dict[str, Any],
         attachment_id: str
-    ) -> bytes | None:
+    ) -> Optional[bytes]:
         data = (
             self.service.users()
                         .messages()
