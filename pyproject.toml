@@ -1,0 +1,75 @@
+[tool.poetry]
+name = "Parsingbloom"
+version = "0.5.0"
+description = "LLM powered information parsing engine prototype"
+authors = ["Senzo Msutwana"]
+packages = [
+  { include = "analysis",       from = "src" },
+  { include = "core",           from = "src" },
+  { include = "parser",         from = "src" },
+  { include = "connectors",     from = "src" },
+  { include = "utils",          from = "src" },
+  { include = "monitoring",     from = "src" },
+  { include = "pipeline",       from = "src" },
+  #{ include = "schemas",       from = "src" },
+  
+]
+
+[tool.poetry.dependencies]
+python = "^3.10"
+accelerate = "^0.30"
+apscheduler = "^3.10"
+beautifulsoup4 = "^4.13.4"
+bitsandbytes = { version = "^0.45.5", extras = ["bnb-cu126"] }
+
+# Explicit GPU PyTorch wheel so the CUDA runtimes shipped with
+# bitsandbytes and torch match (both 12.1).  Torch is *already*
+# an indirect dependency via `transformers`, but we pin it here so the
+# two libraries can’t drift apart.
+
+
+torch = { version = "^2.2.0", source = "pytorch" }
+celery = "^5.3"
+datasets = "^2.12.0"
+huggingface-hub = "^0.23.0"
+google-api-python-client = "^2.130"
+google-auth-httplib2 = "^0.2"
+google-auth-oauthlib = "^1.2"
+keyring = "^25.2"
+llama-cpp-python = "^0.2"
+openai = "^1.6"
+pandas = "^2.2"
+pdfplumber = "^0.11"
+pydantic = ">=2.7"
+python-dateutil = "^2.9"
+python-json-logger = "^2.0"
+PyPDF2 = "^3.0"
+PyYAML = "^6.0"
+prometheus-client = "^0.16"
+psycopg2-binary = "^2.9"
+pytest = "^8.2"
+pyarrow = "<19.0.0"
+regex = "^2023"
+redis = "^4.5"
+scipy = "^1.13"
+matplotlib = "^3.7"
+snowflake-connector-python = "^3.10"
+sqlalchemy = "^2.0"
+triton = "^2.0"
+transformers = "^4.41"
+tqdm = "^4.66"
+pytesseract = "^0.3"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[[tool.poetry.source]]
+name = "pytorch"
+url = "https://download.pytorch.org/whl/cu126"
+priority = "explicit"
+
+[[tool.poetry.source]]
+name     = "bnb-cu126"                     # call it whatever
+url      = "https://huggingface.github.io/bitsandbytes-wheels/cu126"
+priority = "explicit"  

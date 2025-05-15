@@ -1,0 +1,43 @@
+# Ignore all CSV files
+*.csv
+*.pdf
+
+# Except for bank_senders.csv
+!email_agent/config/bank_senders.csv
+
+#Ignore models directory
+models/
+
+
+#Keep data directory but ignore subdirectories
+!/data/
+data/*
+
+
+#Ignore files with secrets
+config/.env
+config/credentials.json
+config/token.pickle
+
+#ignore access_keys and env things
+access_keys.txt
+environment_things.txt 
+sample_plots.py
+
+#ignore testing scripts
+requirements.txt
+sample_plots.py
+test_parser.py
+/data/fix_transactions.py
+/core/flagged_tracker.py
+
+
+# ignore pulled invoices suince it is generated
+/Invoices
+
+#Ignore cloned repositories
+/ParsingBloom_15May11am
+
+/private_accessibility
+
+/tests

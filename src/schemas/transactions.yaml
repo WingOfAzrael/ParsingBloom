@@ -1,0 +1,15 @@
+# Transaction record schema for ParsingBloom
+fields:
+  date:                     {type: date,   required: true}
+  internal_account_number:  {type: number,    required: true}
+  internal_entity:          {type: str,    required: true}
+  institution:              {type: str,    required: true}
+  external_entity:          {type: str,    required: true}
+  amount:                   {type: number, required: true}
+  available_balance:        {type: number, required: false}
+  currency:                 {type: str,    required: true}
+  description:              {type: str,    required: true}
+  transaction_type:         {type: str,    required: true}
+  source_email:             {type: str,    required: true}
+  message_id:                 {type: str,    required: true}
+  run_id:                   {type: str,    required: true}

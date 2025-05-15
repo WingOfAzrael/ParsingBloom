@@ -1,0 +1,164 @@
+# ── Which connector to use ─────────────────────────────────────────────────
+default_connector: gmail       # was “connector: gmail”
+active_schema: transactions 
+
+exporter:
+  id_field: record_id        # or null to disable auto-IDs
+
+connectors:
+  gmail:
+    credentials_path: config/credentials.json
+    token_path:       config/token.pickle
+    max_results:      2      # pulled from scraper.max_results
+    query:            "subject:transaction"  # pulled from scraper.query
+
+# ── Scraper options (drives connector defaults) ─────────────────────────────
+scraper:
+  initial_start_date: "2023-01-01"
+  overlap_hours:      1
+  parse_pdfs:         false
+  save_attachments:   false
+  pdf_password:       "201766138207"
+
+# ── Parser engine settings ─────────────────────────────────────────────────
+parser:
+  provider:         "huggingface"             # was “hf”
+  model_id:         "meta-llama/Llama-3.2-3B-Instruct"
+  device_map:       "auto"
+  device:           0                         # 0 = GPU, 1 = CPU
+  max_tokens:       512
+  hf_batch_size:    8
+  temperature:      0.0
+  openai_model:           "gpt-4"
+  model_path:             "models/llama-3.1-8B-Instruct-f32.bin"
+  n_ctx:                  2048
+  seed:                   42
+  hf_model_id:            "meta-llama/Llama-3.2-3B-Instruct"
+  max_new_tokens:         512
+  quant_bits:             4
+  bnb_4bit_quant_type:    "nf4"
+  bnb_double_quant:       true
+  bnb_4bit_compute_dtype: "float16"                # <— fixed spacing here
+
+
+determinism:
+  struct_threshold: 1.0        # minimum p_struct to pass (e.g. 1.0 for Tier II/III)
+  id_threshold: 0.99           # minimum lower‐bound CI for p_id (e.g. 0.99)
+  alpha: 0.05                  # for 95% Clopper–Pearson CIs
+  latency_cv_threshold: 0.05   # acceptable CV on parse latency
+
+# ── Account definitions ─────────────────────────────────────────────────────
+accounts:
+  - internal_account_number: "11663427844"
+    internal_entity:         "Senzo Msutwana"
+    institution:             "Discovery"
+    currency:                "ZAR"
+  - internal_account_number: "16292977375"
+    internal_entity:         "Senzo Msutwana"
+    institution:             "Discovery"
+    currency:                "ZAR"
+  - internal_account_number: "4057425883"
+    internal_entity:         "Civil Projects Engineers"
+    institution:             "ABSA"
+    currency:                "ZAR"
+  - internal_account_number: "9322072897"
+    internal_entity:         "Civil Projects Engineers"
+    institution:             "ABSA"
+    currency:                "ZAR"
+
+# ── Email‐filter settings ───────────────────────────────────────────────────
+email_filter:
+  use_label:          true
+  label_name:         Banking
+  use_domain_filter:  false
+  sender_csv:         config/bank_senders.csv
+
+# ── OpenAI keyring settings ─────────────────────────────────────────────────
+openai:
+  keyring_service: email_agent
+  keyring_user:    openai_api_key
+  api_base:        ""    # override for private OpenAI‐compatible endpoints
+
+# ── File paths used elsewhere in the code ───────────────────────────────────
+paths:
+  invoice_dir:         Invoices
+  data_dir:            data
+  runs_file:           data/runs.csv
+  master_file:   data/master.csv
+
+  # legacy paths you may still reference
+  accounts_csv:        config/accounts.csv
+  metadata_csv:        data/metadata.csv
+  flagged_csv:         data/flagged_messages.csv
+  run_folder:          data/runs
+  runs_csv:            data/runs.csv
+
+# ── Synonyms for robust field mapping ────────────────────────────────────────
+synonyms:
+  date:
+    - trans_date
+    - date_of_transaction
+    - txn_date
+  account_name:
+    - acct_name
+    - account
+    - account_title
+  account_number:
+    - acct_number
+    - account_no
+    - acc_num
+  internal_entity:
+    - Payment made by
+    - Payment made from
+    - Paid from
+    - “Payment originated from”
+  institution:
+    - bank
+    - bank_name
+  external_entity:
+    - payee
+    - recipient
+    - merchant
+    - vendor
+    - Payment made to
+    - Paid to
+    - “Beneficiary”
+    - “Payment received by”
+  description:
+    - narrative
+    - desc
+    - details
+  amount:
+    - amt
+    - value
+    - transaction_amount
+    - for the amount of
+  currency:
+    - curr
+    - currency_code
+  available_balance:
+    - balance
+    - avail_balance
+    - available
+
+
+
+# ── Database loader settings ────────────────────────────────────────────────
+database:
+  type:   "postgres"
+  host:   "localhost"
+  port:   5432
+  dbname: "email_agent_db"
+  user:   "emailagent"
+  schema: "public"
+  table:  "transactions"
+
+# ── Scheduler (if you still use run_once.py / schedule_runner.py) ───────────
+scheduler:
+  interval:  "daily"
+  cron_expr: "0 3 * * *"
+
+# ── Celery broker & backend (required by new pipeline/tasks.py) ─────────────
+broker:
+  url: ""                # empty string disables Celery
+  result_backend: ""
