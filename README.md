@@ -159,9 +159,28 @@ Note: System built and tested on a Unix-based OS, so use a Virtual Machine (VM) 
     <pre markdown> bash:
     python pipeline/run_pipeline.py --start-date 2023-01-01
      </pre>
-## Determinism Tests
+## Determinism Tests and Their Purpose
+
+### Depth-of-Testing Tiers
+
+ParsingBloom ships with Tier 1 harness scripts (`src/analysis/determinism_test.py`).  
+Upgrade paths:
+
+Tiers exist that correspond to the quality of outputs based on their robustness. It is possible to perform diagnostic tests to prove this. The following table is helpful:
+
+| Tier | Scope & Goal | Required Tests | When to Use | Effort ▼ |
+|------|--------------|----------------|-------------|-----------|
+| **1 Audit-Ready** | Prove outputs are stable & timely | • 30 × runs on 5–10 emails<br>• 100 % field-exact match<br>• Measure runtime mean ± σ; ensure CV < 5 %<br>• CI fails if modal-JSON changes | Most analytics engagements with standard SLAs | **Low** – straightforward CI + dashboards |
+| **2 Engineering-Grade** | Catch subtle nondeterminism & environment drift | • SHA-256 hashing of prompts & raw LLM outputs<br>• Cross-env spot-checks (CPU vs GPU, 4/8-bit)<br>• Golden-file byte diff in CI | Larger teams, frequent infra/model churn | **Medium** – modest extra scripting + golden files |
+| **3 Regulated-Grade** | Meet strict audit/compliance & SLA requirements | • Multi-GPU/CPU family grid tests<br>• Stochastic perturbation envelope (do_sample=True)<br>• Daily/weekly 3σ control charts, auto alerts | Finance, healthcare, government, or other high-assurance domains | **High** – infra orchestration + continuous monitoring |
+
+### Underlying Theory
+
+**Structural vs. identity determinism**
 
 
+
+### Corresponding
 
 
 ## Sample Output Plots
