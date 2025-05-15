@@ -24,6 +24,8 @@ If both these tests are passed, the pipeline is considered *self-consistent*.
 
 ## Usage
 
+export HF_API_TOKEN=hf_xxx
+
 ### Local
 
 <pre markdown>  bash:
@@ -57,7 +59,7 @@ Note: These command options override whatever you have in config.yaml
 
 ### Docker
 
-export HF_API_TOKEN=hf_xxx
+
 
 <pre markdown>  bash:
 
