@@ -141,7 +141,7 @@ run_once() {
 
   if (( RUNS > 1 )); then
     echo "📊  Generating plots…"
-    poetry run python src/pipeline.determinism_plot.py --dir "$OUT_DIR"
+    poetry run python tests/determinism_plot.py --dir "$OUT_DIR"
   fi
 }
 

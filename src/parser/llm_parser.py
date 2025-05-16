@@ -342,6 +342,9 @@ class LLMParser:
             })
 
         prompts = [r["prompt"] for r in records]
+        #── record the exact prompt text for determinism metadata ──
+        # join with a separator so it’s a single string
+        self._last_prompt = f"\n\n{prompts}\n\n"
         all_outputs = self._chat(
             prompts,
             max_new_tokens   = PARSER_CFG.max_new_tokens,

@@ -38,15 +38,15 @@ from core.config_loader import load_config
 from utils.validators import get_model, validate_record
 
 class TransactionExporter:
-    def __init__(self) -> None:
+    def __init__(self, master_file: str | Path | None = None, runs_csv: str | None = None) -> None:
         # Load paths via Pydantic config
         cfg   = load_config()
         paths = cfg.paths
         self.cfg = cfg
         self.schema = cfg.active_schema
-        self.master    = Path(paths.master_file)
+        self.master_file = Path(master_file) if master_file else Path(cfg.paths.master_file)
+        self.runs_csv    = Path(runs_csv)    if runs_csv    else Path(cfg.paths.runs_csv)
         self.run_dir   = Path(paths.invoice_dir)
-        self.runs_csv  = Path(paths.runs_csv)
         self.flag_csv: Path = Path(paths.flagged_csv)
         self.meta_csv: Path = Path(paths.metadata_csv)
 

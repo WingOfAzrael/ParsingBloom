@@ -76,7 +76,7 @@ def main(start_date: str | None = None,
         print("Running single-batch export (run=1)…")
         # parse everything in one go, speed things up
         txns = parser.parse_batch(msgs, pdf_texts, run_id=run_id)
-
+        dup = fail = 0
         processed_ids = set()
         if CFG.scraper.save_attachments:
             for msg, txn in zip(msgs, txns):
@@ -86,7 +86,7 @@ def main(start_date: str | None = None,
                 if mid in processed_ids:
                     dup += 1
                     continue
-                
+
                 try:
                     save_attachments(connector.service, msg, txn)
                 except Exception as e:
@@ -102,124 +102,159 @@ def main(start_date: str | None = None,
                     fail += 1
 
                 processed_ids.add(mid)
+
         exporter = TransactionExporter()
         exporter.export(txns, run_id)
-        last_ts = txns[-1].date.strftime("%Y-%m-%dT%H:%M:%SZ") \
-                if txns else fetch_after or ""
+        last_ts = (
+            txns[-1].date.strftime("%Y-%m-%dT%H:%M:%SZ")
+            if txns else fetch_after or ""
+        )
         exporter.log_run(run_id, run_ts, last_ts, len(msgs), len(txns))
-        dup = fail = 0
+
+        
+
         # optional downstream loads
         load_postgres()
         load_snowflake()
 
-        logging.info("[Run %s] total=%d parsed=%d dup=%d fail=%d",
-             run_id, len(msgs), len(txns), dup, fail)
+        logging.info(
+            "[Run %s] total=%d parsed=%d dup=%d fail=%d",
+            run_id, len(msgs), len(txns), dup, fail
+        )
         print(f"Written {len(txns)} transactions -> {CFG.paths.master_file}")
         return
 
-
-    # Baseline run
+    # ── Baseline run for multi-run suite ──────────────────────────────
     print("Running baseline parse (run 1)")
     baseline_outputs = []
     for txn in parser.parse_batch(msgs, pdf_texts, run_id="determinism_1"):
-        d = txn.to_dict()
+        # Use model_dump(mode='json') to convert dates to ISO strings
+        d = txn.model_dump(mode="json")
         baseline_outputs.append(json.dumps(d, sort_keys=True))
     N = len(baseline_outputs)
 
-    # Collections for summary
-    results = []
+    # ── Multi-run determinism suite (args.runs > 1) ───────────────────
+
+    det_master = out_base / "det_master.csv"
+    exporter_args = {"master_file": det_master, "runs_csv": CFG.paths.runs_csv}
     latencies = []
+    results   = []
     p_structs = []
-    p_ids = []
+    p_ids     = []
     ci_bounds = []
 
-    # Replicate runs
     for run_idx in trange(1, args.runs + 1, desc="Determinism runs"):
-        print(f"Starting run {run_idx}")
-        start = time.time()
-        txns = parser.parse_batch(msgs, pdf_texts, run_id=f"determinism_{run_idx}")
-        duration = time.time() - start
-        latency_ms = duration * 1000
+        run_id, run_ts = run_tracker.start_run(fetch_after)
+        start_t = time.perf_counter()
+        txns = parser.parse_batch(msgs, pdf_texts, run_id=run_id)
+        latency_ms = int((time.perf_counter() - start_t) * 1000)
         latencies.append(latency_ms)
 
-        # Prepare run directory
-        run_dir = out_base / f"transaction_det_test_{run_idx}"
+        exporter = TransactionExporter(**exporter_args)
+        exporter.export(txns, run_id)
+        last_ts = (
+            txns[-1].date.strftime("%Y-%m-%dT%H:%M:%SZ")
+            if txns else fetch_after or ""
+        )
+        exporter.log_run(run_id, run_ts, last_ts, len(msgs), len(txns))
+        
+        # Copy the global flagged CSV into the determinism directory
+        # under the name 'det_flagged_messages.csv' so write_run_meta can find it.
+        from shutil import copy
+        master_flagged = Path(CFG.paths.flagged_csv)
+        det_flagged    = out_base / f"det_{master_flagged.name}"
+        if master_flagged.exists():
+            copy(master_flagged, det_flagged)
+
+
+        # Tier-2 metadata hook per run
+        from core.determinism import write_run_meta
+        write_run_meta(
+            run_id=run_id,
+            output_dir=out_base,
+            prompt_text=parser._last_prompt,
+            model_name=CFG.parser.model_id
+        )
+
+        if run_idx == 1:
+            baseline_outputs = []
+            for txn in txns:
+                d = txn.model_dump(mode="json")
+                baseline_outputs.append(json.dumps(d, sort_keys=True))
+
+        run_dir  = out_base / f"transaction_det_test_{run_idx}"
         run_dir.mkdir(exist_ok=True)
         csv_path = run_dir / 'results.csv'
 
-        # Compare to baseline
-        struct_success = 0
-        id_success = 0
+        struct_success = id_success = 0
         with open(csv_path, 'w', newline='') as f:
             writer = csv.writer(f)
-            writer.writerow(['message_id', 'struct_match', 'id_match', 'latency_ms'])
+            writer.writerow(['message_id','struct_match','id_match','latency_ms'])
             for msg, txn, base_json in zip(msgs, txns, baseline_outputs):
-                d = txn.to_dict()
-                j = json.dumps(d, sort_keys=True)
-                schema_keys = set(json.loads(base_json).keys())
-                schema2_keys = set(d.keys())
-                struct_ok = (schema_keys == schema2_keys)
-                id_ok = (j == base_json)
-                if struct_ok:
-                    struct_success += 1
-                if id_ok:
-                    id_success += 1
+                d_dict = txn.model_dump(mode="json")
+                j_json = json.dumps(d_dict, sort_keys=True)
+                schema_keys  = set(json.loads(base_json).keys())
+                schema2_keys = set(d_dict.keys())
+                struct_ok    = (schema_keys == schema2_keys)
+                id_ok        = (j_json == base_json)
+                if struct_ok: struct_success += 1
+                if id_ok:     id_success     += 1
                 writer.writerow([msg['id'], struct_ok, id_ok, latency_ms])
 
-        # Compute metrics
         p_struct = struct_success / N
-        p_id = id_success / N
+        p_id     = id_success     / N
         pmin, pmax = clopper_pearson(id_success, N, alpha)
 
         results.append({
             'run': run_idx,
             'p_struct': p_struct,
-            'p_id': p_id,
-            'pmin': pmin,
-            'pmax': pmax,
+            'p_id':     p_id,
+            'pmin':     pmin,
+            'pmax':     pmax,
             'latency_ms': latency_ms
         })
         p_structs.append(p_struct)
         p_ids.append(p_id)
         ci_bounds.append((pmin, pmax))
 
-    # Write summary
+    # ── Write aggregated summary.csv ──────────────────────────────────
     summary_path = out_base / 'summary.csv'
     with open(summary_path, 'w', newline='') as f:
         writer = csv.writer(f)
         writer.writerow([
-            'run', 'p_struct', 'struct_pass',
-            'p_id', 'pmin', 'pmax', 'id_pass',
-            'latency_ms', 'latency_cv'
+            'run','p_struct','struct_pass',
+            'p_id','pmin','pmax','id_pass',
+            'latency_ms','latency_cv'
         ])
         cv = stdev(latencies) / mean(latencies) if len(latencies) > 1 else 0.0
         for res, (pmin, pmax) in zip(results, ci_bounds):
             struct_pass = (res['p_struct'] >= struct_thr)
-            id_pass = (pmin >= id_thr)
+            id_pass     = (pmin >= id_thr)
             writer.writerow([
                 res['run'], res['p_struct'], struct_pass,
-                res['p_id'], pmin, pmax, id_pass,
+                res['p_id'],   pmin,          pmax,     id_pass,
                 res['latency_ms'], cv
             ])
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(
         description="Determinism test runner (1 run = batch export; N>1 = full suite)"
     )
-    parser.add_argument("--runs", type=int, default=1,
+    parser.add_argument("--runs",    type=int,   default=1,
                         help="Number of replicates (default: 1 → single batch export)")
     parser.add_argument("--out-dir", default="",
                         help="Output directory override (else: data/ or data/determinism_tests/)")
-    parser.add_argument("--force", action="store_true",
+    parser.add_argument("--force",   action="store_true",
                         help="Bypass incremental scraper cache")
-    parser.add_argument("--alpha", type=float, default=0.05,
-                        help="Confidence‐interval alpha (default 0.05)")
-    parser.add_argument("--gpus", action="store_true",
+    parser.add_argument("--alpha",   type=float, default=0.05,
+                        help="Confidence-interval alpha (default 0.05)")
+    parser.add_argument("--gpus",    action="store_true",
                         help="Enable GPU for parser")
     args, extra = parser.parse_known_args()
 
-    # Merge any EXTRA_ARGS you forward into args
+    # Pass through extra args and pick device
     args.extra_args = extra
     os.environ["PARSINGFORGE_DEVICE"] = "cuda" if args.gpus else "cpu"
-    
-    main(args)
+
+    main(**vars(args))
