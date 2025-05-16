@@ -1,204 +1,191 @@
-# ParsingBloom
+```latex
 
-Version: 0.5.0
+\title{ParsingBloom}
+\date{Version 0.5.0}
+\begin{document}
+\maketitle
 
-ParsingBloom is a proof-of-concept pipeline that turns raw into analytics-ready transaction records. The whole idea of ParsingBloom is to showcase the use of open-source transformer-based models (LLMs) in the context of building automated data pipelines that produce analytics-ready data. 
+\section{Introduction}
+ParsingBloom is a proof-of-concept pipeline that turns raw transaction emails into analytics-ready records.  Its goal is to showcase open-source transformer-based LLMs in end-to-end ETL, producing high-quality, schema-validated JSON and CSV outputs.
 
+\section{Key Ideas}
+\begin{tabular}{@{}p{4cm}p{10cm}@{}}
+\toprule
+\textbf{Principle} & \textbf{What it means in code} \\ \midrule
+Deterministic output & Every run over the same inputs yields bit-identical JSON; both identity and structure tests enforce this. \\
+Connector abstraction & Gmail connector ships today; any IMAP, REST, or webhook source can be plugged in behind the same interface. \\
+Hybrid parsing & LLM\,first strict JSON extraction, with deterministic regex fallback if validation fails. \\
+Dynamic schema support (0.5) & Drop a YAML spec in \texttt{config/schemas/}; Pydantic validates and exports exactly those fields. \\
+\bottomrule
+\end{tabular}
 
-## Key ideas
+\section{Determinism Tests}
+\begin{itemize}
+  \item \textbf{Identity tests} – byte-for-byte equality of two outputs.  
+  \item \textbf{Structure tests} – identical field names and types, even if values differ.  
+\end{itemize}
+Passing both means the pipeline is \emph{self-consistent}.
 
-| Principle | What it means in code |
-|-----------|----------------------|
-| **Deterministic output** | Every run over the same inputs yields bit-identical JSON; determinism tests (identity & structure) enforce this. |
-| **Connector abstraction** | Gmail connector ships today; any IMAP, REST, or webhook source can be plugged in behind the same interface. |
-| **Hybrid parsing** | LLM attempts strict JSON extraction. If it fails, deterministic regex fallback ensures fields are still produced. |
-| **Dynamic schema support (0.5)** | Drop a YAML spec in `config/schemas/` and ParsingBloom will validate & export rows with exactly those fields. |
+\section{Usage}
+\texttt{export HF\_API\_TOKEN=hf\_xxx}
 
-
-## Determinism tests
-
-* **Identity tests** – byte-for-byte equality of two outputs.  
-* **Structure tests** – identical field names & types even if values differ. 
-
-If both these tests are passed, the pipeline is considered *self-consistent*.  
-
-## Usage
-
-export HF_API_TOKEN=hf_xxx
-
-### Local
-
-<pre markdown>  bash:
-
-chmod +x deploy/deploy_pb.sh            (to make sure its executable)
-
+\subsection{Local}
+\begin{verbatim}
+chmod +x deploy/deploy_pb.sh
 bash deploy/deploy_pb.sh
-</pre>
+\end{verbatim}
+\textbf{Options} (override \texttt{config.yaml}):
+\begin{description}
+  \item[\texttt{--gpus}] Enable CUDA if available.
+  \item[\texttt{--force}] Reinstall dependencies, overwrite build artifacts.
+  \item[\texttt{--runs N}] Number of replicates (default 1).
+  \item[\texttt{--out-dir DIR}] Base output directory.
+  \item[\texttt{--schedule MODE}] Daemon mode: \texttt{hourly}, \texttt{daily}, or cron.
+\end{description}
 
-**Options**
-
-Note: These command options override whatever you have in config.yaml
-
-- --gpus
-    Enable CUDA/GPU flags (if your container or host has Nvidia drivers).
-
--   --force
-    Reinstall dependencies and overwrite any existing build artifacts.
-
--   --gpus             Use GPU (sets PARSINGBLOOM_DEVICE=cuda)
-
--   --runs N           Number of replicates (default: 1)
-
--   --out-dir DIR      Base output directory (default: data/ if --runs=1; data/pipeline_executes/ if >1)
-
--   --schedule MODE    Daemon mode (only valid when --runs=1): hourly, daily, or cron per config
-
--   -h, --help         Show this help and exit
-
-    Requires: Python 3.10 toolchain, Hugging Face token.
-
-### Docker
-
-
-
-<pre markdown>  bash:
-
+\subsection{Docker}
+\begin{verbatim}
 deploy/deploy_docker.sh
-</pre>
+\end{verbatim}
+Same options as Local.
 
-**Options**
-
-Same as local deployment options
-
-### Determinism Testing Framework.
-
-<pre markdown> bash:
-
-chmod +x deploy/deploy_determinism.sh (to set permisions for shell script to be executable)
-bash deploy/deploy_determinism.sh
-</pre>
-
-- --runs <n> where 
-    Choosing the number of runs to use for statistics. n is an integer Default value is 30.
-
-- --dir (optional)
-    Choose directory plots will be added to. Default directory is 'data/determinism_tests'
-
-
-Just run the plots
-
-<pre markdown> 
+\subsection{Determinism Testing Framework}
+\begin{verbatim}
+chmod +x deploy/deploy_determinism.sh
+bash deploy/deploy_determinism.sh --runs 30
 python pipeline/determinism_plot.py --dir data/determinism_tests
-</pre>
+\end{verbatim}
 
-## Full explanation of system behavior
+\section{Full Explanation of System Behavior}
+\begin{enumerate}
+  \item Authenticate to Gmail and fetch new messages.
+  \item Send each email body to an LLM (OpenAI, llama-cpp, HuggingFace) with a strict JSON prompt.
+  \item If validation fails, run a regex fallback to extract core fields.
+  \item Support dynamic schema creation via YAML and Pydantic.
+  \item Each run writes a per-run CSV and appends to a master CSV.
+  \item Track run metadata (start/end times, counts) and flag ambiguous items.
+  \item Offer a monitoring script to compute z-scores on run sizes for anomalies.
+  \item (Planned) keep daemon alive until termination.  
+\end{enumerate}
 
+\section{Systems Key Features and Problems They Solve}
+\begin{itemize}
+  \item Configuration-driven scheduling (APScheduler + cron).  
+  \item Hybrid parsing (LLM first + regex fallback).  
+  \item Per-run + master CSV exports for auditability.  
+  \item Attachment handling via \texttt{pdfplumber}.  
+  \item Lightweight drift monitoring decoupled from core logic.  
+  \item Flagging mechanism for ambiguous or failed parses.  
+  \item Self-diagnosis with meta-analytics on system metadata.  
+\end{itemize}
 
-1. Authenticates to Gmail and fetches new messages matching your filter.  
-2. Sends each email body to an LLM (OpenAI, llama-cpp or HuggingFace) with a strict JSON extraction prompt.  
-3. If the LLM output is empty or fails a JSON-Schema validation, a fallback regex pass kicks in to extract date, amount, balance, account last-4 and description.  
-4. Has dynamic schema creation capabilities. You create a a schema (in a .yaml file) and the system parses datas with those fields.  
-5. A run is an instance of execution of the information scraping procedure. Writes a per-run CSV (`data/runs/{run_id}.csv`) and appends every row (including flagged ones) to a master CSV (`data/transactions.csv`). 
-6. Tracks run metadata (start/end times, counts) and flags unparsed or ambiguous items for manual review.  
-7. Offers a standalone monitoring script that computes z-scores on run sizes to detect anomalies.
-8. System can be set to run like a daemon that remains alive until some termination condition is met (including manual termination of the process)........ Not yet thouse, will add this functionality.
+\section{Technologies Used}
+\begin{itemize}
+  \item \textbf{HuggingFace Transformers}: \texttt{meta-llama/Llama-3.2-3B-Instruct}.  
+  \item OpenAI, llama-cpp, and HuggingFace APIs (unquantized & quantized).  
+  \item Standard Python libraries for CSV, logging, metrics, etc.  
+\end{itemize}
 
-## Systems key features and problems they solve
-
-- **Configuration-driven scheduling** with APScheduler and cron syntax, overrideable via an env var, so you can adjust scraping run frequency at runtime or via a UI later (no UI incorporated in this iteration).  
-- **Hybrid parsing** (LLM-first + deterministic regex fallback) to maximise the probability that dimensions for datasets are correctly extracted.  
-- **Per-run + master CSV exports** for full auditability, idempotent loading and easy backfilling.  
-- **Attachment handling** stubbed via pdfplumber. More sophisticated methods an afterthought at this stage.  
-- **Lightweight drift monitoring** decoupled from parsing logic, so you can catch data anomalies in COntinuous Integration (CI) or on a schedule without bloating the core pipeline.  
-- **Flagging mechanism** for ambiguous last-4 matches or failed parses, ensuring no transaction is ever lost.
-- **Self diagnosis** with analytics on system meta-data (I like to call this meta-analytics).
-
-## Technologies used
-
-- **Huggingface transformers**: In particular, "meta-llama/Llama-3.2-3B-Instruct", for LLM parsing. Capabilities for OpenAI, llama-cpp-python APIs are built-in but untested. 
-- **The rest**: Pretty much standard python libraries for various tasks. 
-
-## Manual deployment instructions (if quickstart is too convenient)
-
-Note: System built and tested on a Unix-based OS, so use a Virtual Machine (VM) to deploy in the following way if on Windows.
-
-1. **Clone the repo and install required modules**  
-   <pre markdown> bash:
+\section{Manual Deployment Instructions}
+\begin{enumerate}
+  \item Clone and install:
+    \begin{verbatim}
     git clone https://github.com/you/ParsingBloom.git
     cd ParsingBloom
-    </pre>
-
-    Create a Python virtual environment & install the dependencies
-    <pre markdown> bash:
-    conda create venv
-    conda activate venv
+    conda create -n pb python=3.10
+    conda activate pb
     pip install -r requirements.txt
-     </pre>
-
-2. **Configure** 
-
-    Note that default configuration (currently in code) assumes at least an NVIDIA RTX 2080 Super. We have quentised (reduced numerical precision of weights) the **Huggingface transformers** because while its not the biggest model, running locally unquantised led to killed process due to insufficient memory. 
-    We note that fairly decent compute is required to perform this task using open-source models. If you use the OpenAI api, this is not a concern; rather, financial cost becomes a concern. This is the tradeoff.
-
-    Copy config/config.yaml example → config/config.yaml. You can play around with whatever configurations. 
-
-    Update Gmail paths (credentials_path, token_path), OpenAI keyring settings, schedule.cron and env_var.
-
-    Drop your config/credentials.json (Gmail OAuth2 secrets) in place.
-
-3. **Run the scheduler**
-    <pre markdown>bash
+    \end{verbatim}
+  \item Configure:
+    \begin{itemize}
+      \item Copy \texttt{config/config.yaml.example} $\to$ \texttt{config/config.yaml}.  
+      \item Set Gmail OAuth2 secrets, KMS/Vault settings, scheduler, etc.  
+    \end{itemize}
+  \item Run scheduler or one-off:
+    \begin{verbatim}
     python schedule_runner.py
-    </pre>
-
-    Override on the fly:
-    <pre markdown>bash
     SCHEDULE_CRON="0 0 * * *" python schedule_runner.py
-    </pre>
-    One-off/backfill runs
-    <pre markdown> bash:
     python pipeline/run_pipeline.py --start-date 2023-01-01
-     </pre>
-## Determinism Tests and Their Purpose
+    \end{verbatim}
+\end{enumerate}
 
-### Depth-of-Testing Tiers
+\section{Determinism Tiers}
+\begin{tabular}{@{}lllll@{}}
+\toprule
+\textbf{Tier} & \textbf{Scope \& Goal} & \textbf{Required Tests} & \textbf{When to Use} & \textbf{Effort}\\ \midrule
+1 Audit-Ready & Stable \& timely & 30× runs, 100\% field match, CV<5\% & Standard SLAs & Low \\
+2 Engineering-Grade & Catch nondeterminism & Prompt+\!output hashes, cross-env spot checks & Infra churn & Medium \\
+3 Regulated-Grade & Compliance \& SLAs & Grid tests, stochastic envelope, 3σ control charts & Finance, healthcare & High \\
+\bottomrule
+\end{tabular}
 
-ParsingBloom ships with Tier 1 harness scripts (`src/analysis/determinism_test.py`).  
-Upgrade paths:
+\section{Configuration Loading Logic}
+The \texttt{load\_config()} function finds \texttt{config.yaml} via:
+\begin{enumerate}
+  \item Explicit \texttt{path} argument  
+  \item \texttt{PARSINGBLOOM\_CONFIG} or \texttt{PARSINGFORGE\_CONFIG} env var  
+  \item \texttt{<project\_root>/config/config.yaml}  
+\end{enumerate}
+It infers a default connector if only one is defined, and respects \texttt{PARSINGBLOOM\_DEVICE} overrides.  Fields are loaded into \texttt{FullConfig} with Pydantic validation :contentReference[oaicite:0]{index=0}.
 
-Tiers exist that correspond to the quality of outputs based on their robustness. It is possible to perform diagnostic tests to prove this. The following table is helpful:
+\section{Run Tracking \& Metadata}
+\texttt{RunTracker} logs each execution:
+\begin{itemize}
+  \item \texttt{start\_run()} generates a UUID and UTC timestamp.  
+  \item \texttt{end\_run(fetched, processed, last\_time)} appends to \texttt{runs.csv} and overwrites \texttt{metadata.csv}.  
+\end{itemize}
+All stored under \texttt{data/} for audit trails :contentReference[oaicite:1]{index=1}:contentReference[oaicite:2]{index=2}.
 
-| Tier | Scope & Goal | Required Tests | When to Use | Effort ▼ |
-|------|--------------|----------------|-------------|-----------|
-| **1 Audit-Ready** | Prove outputs are stable & timely | • 30 × runs on 5–10 emails<br>• 100 % field-exact match<br>• Measure runtime mean ± σ; ensure CV < 5 %<br>• CI fails if modal-JSON changes | Most analytics engagements with standard SLAs | **Low** – straightforward CI + dashboards |
-| **2 Engineering-Grade** | Catch subtle nondeterminism & environment drift | • SHA-256 hashing of prompts & raw LLM outputs<br>• Cross-env spot-checks (CPU vs GPU, 4/8-bit)<br>• Golden-file byte diff in CI | Larger teams, frequent infra/model churn | **Medium** – modest extra scripting + golden files |
-| **3 Regulated-Grade** | Meet strict audit/compliance & SLA requirements | • Multi-GPU/CPU family grid tests<br>• Stochastic perturbation envelope (do_sample=True)<br>• Daily/weekly 3σ control charts, auto alerts | Finance, healthcare, government, or other high-assurance domains | **High** – infra orchestration + continuous monitoring |
+\section{Metrics \& Monitoring}
+Prometheus metrics are exposed on port 8000:
+\begin{itemize}
+  \item \texttt{emails\_fetched\_total}, \texttt{parse\_success\_total}, \ldots  
+  \item Histogram of \texttt{llm\_latency\_seconds}  
+\end{itemize}
+Endpoint spun up by \texttt{start\_metrics\_server()} :contentReference[oaicite:3]{index=3}:contentReference[oaicite:4]{index=4}.
 
-### Underlying Theory
+\section{Database Loaders}
+Dual-loader in \texttt{db\_loader.py}:
+\begin{itemize}
+  \item \texttt{load\_postgres()} uses SQLAlchemy to append to Postgres if configured.  
+  \item \texttt{load\_snowflake()} connects via Snowflake connector and uploads CSV.  
+  \item Silent skips if environment not present :contentReference[oaicite:5]{index=5}:contentReference[oaicite:6]{index=6}.
+\end{itemize}
 
-**Structural vs. identity determinism**
+\section{Exporters \& Schema Enforcement}
+\texttt{TransactionExporter}:
+\begin{itemize}
+  \item Reads existing max \texttt{transaction\_id}, assigns new IDs.  
+  \item Fast-path append when dates are monotonic; otherwise merge in O(N+M).  
+  \item Per-run snapshots, flagged-message logging.  
+\end{itemize}
+Schema fields driven by Pydantic models :contentReference[oaicite:7]{index=7}:contentReference[oaicite:8]{index=8}.
 
+\section{Tier-2 Determinism Hook}
+A hook in \texttt{pipeline\_execute.py} writes out run metadata, the last LLM prompt text, and model name for cross-run reproducibility.
 
+\section{Security, Backups \& Deployment Best Practices}
+\begin{itemize}
+  \item Use LUKS or cloud KMS (e.g. Vault) for config and token encryption.  
+  \item Encrypted backups of \texttt{data/} directory; restore via secure key.  
+  \item Retry policies for connector and database uploads.  
+\end{itemize}
 
-### Corresponding
+\section{Meta-Analysis \& Cybersecurity Research}
+Capture and analyze operational logs, performance metrics, and drift signals to feed anomaly detection, audit trails, and forensic analysis.
 
+\section{Extensible Modularity}
+Connectors, parsers, exporters, loaders, and analysis scripts live in separate modules, allowing new data sources or sinks to be added with minimal changes :contentReference[oaicite:9]{index=9}:contentReference[oaicite:10]{index=10}.
 
-## Sample Output Plots
+\section{Roadmap Toward GAIA}
+\begin{description}
+  \item[v0.6: Determinism \& Reliability] Output hashing, prompt logging, cross-env testing, basic alerting.  
+  \item[v0.7: Statistical Quality Control] 3σ control charts, Clopper–Pearson intervals, multi-backend cross-validation.  
+  \item[v0.8: Agentic Layer Integration] Add GAIA orchestrator, tool registry, execution engine wrapping ParsingBloom modules.  
+  \item[v0.9: Memory \& Learning] Vector-store memory, critic loop, embedded physics for complex reasoning.  
+  \item[v1.0: GAIA] Full Jarvis-style agentic assistant in interactive and batch modes, with regulated-grade auditability.  
+\end{description}
 
+\end{document}
 
-
-## Possible next steps
-
-    - Integrate a schema registry (Confluent or Git-backed JSON-Schema) and enforce versioning at ingest.
-
-    - Enhance drift-detection with Great Expectations or dbt tests for schema and distribution checks.
-
-    - Build a web UI to edit schedule, filters and account maps and push updates to the config store.
-
-    - Implement staging + upsert loading into Postgres (or Snowflake if feasible), with automatic merging on email_id + timestamp.
-
-    - Migrate secrets from keyring to Vault or a cloud KMS for production-grade security.
-
-    - Extend monitoring to include field-level z-scores, null-rate alerts and regression testing against a golden email set.
-
-    - Incorporate automated self-diagnostic capabilities for adaptive tuning using meta-analytics.
+```
