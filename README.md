@@ -1,8 +1,10 @@
 ```latex
 
+\documentclass{article}
 \title{ParsingBloom}
 \date{Version 0.5.0}
 \begin{document}
+
 \maketitle
 
 \section{Introduction}
