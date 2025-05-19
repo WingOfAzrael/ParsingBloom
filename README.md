@@ -56,13 +56,13 @@ Note: System built and tested on a Unix-based OS, so use a Virtual Machine (VM) 
 1. **Clone the repo and install required modules**
 
 
-   <pre markdown> bash:
+   <pre markdown> 
     git clone https://github.com/you/ParsingBloom.git
     cd ParsingBloom
     </pre>
 
     Create a Python virtual environment & install poetry
-    <pre markdown> bash:
+    <pre markdown> 
     conda create venv
     conda activate venv
     pip install poetry
@@ -86,11 +86,11 @@ Note: System built and tested on a Unix-based OS, so use a Virtual Machine (VM) 
 
 ### Local Deployment
 
-<pre markdown>  bash:
+<pre markdown>  
 
 chmod +x deploy/deploy_pb.sh            (to make sure its executable)
 
-bash deploy/deploy_pb.sh
+deploy/deploy_pb.sh
 </pre>
 
 **Options**
@@ -119,7 +119,7 @@ Note: These command options override whatever you have in config.yaml
 
 
 
-<pre markdown>  bash:
+<pre markdown> 
 
 deploy/deploy_docker.sh
 </pre>
@@ -130,7 +130,7 @@ Same as local deployment options
 
 ### Determinism Testing Deployment.
 
-<pre markdown> bash:
+<pre markdown> 
 
 chmod +x deploy/deploy_determinism.sh (to set permisions for shell script to be executable)
 bash deploy/deploy_determinism.sh
