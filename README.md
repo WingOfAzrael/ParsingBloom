@@ -87,7 +87,6 @@ Note: System built and tested on a Unix-based OS, so use a Virtual Machine (VM) 
 ### Local Deployment
 
 <pre markdown>  
-
 chmod +x deploy/deploy_pb.sh            (to make sure its executable)
 
 deploy/deploy_pb.sh
@@ -120,7 +119,6 @@ Note: These command options override whatever you have in config.yaml
 
 
 <pre markdown> 
-
 deploy/deploy_docker.sh
 </pre>
 
@@ -131,8 +129,8 @@ Same as local deployment options
 ### Determinism Testing Deployment.
 
 <pre markdown> 
-
 chmod +x deploy/deploy_determinism.sh (to set permisions for shell script to be executable)
+
 bash deploy/deploy_determinism.sh
 </pre>
 
