@@ -36,7 +36,7 @@ ParsingBloom is a proof-of-concept pipeline that turns raw into analytics-ready 
 2. Sends each email body to an LLM (OpenAI, llama-cpp or HuggingFace) with a strict JSON extraction prompt.  
 3. If the LLM output is empty or fails a JSON-Schema validation, a fallback regex pass kicks in to extract date, amount, balance, account last-4 and description.  
 4. Has dynamic schema creation capabilities. You create a a schema (in a .yaml file) and the system parses datas with those fields.  
-5. A run is an instance of execution of the information scraping procedure. Writes a per-run CSV (`data/runs/{run_id}.csv`) and appends every row (including flagged ones) to a master CSV (`data/transactions.csv`). 
+5. A run is an instance of execution of the information scraping procedure. Writes a per-run CSV (`data/runs/{run_id}.csv`) and appends every row (including flagged ones) to a master CSV (`data/master.csv`). 
 6. Tracks run metadata (start/end times, counts) and flags unparsed or ambiguous items for manual review.  
 7. Offers a standalone monitoring script that computes z-scores on run sizes to detect anomalies.
 8. System can be set to run like a daemon that remains alive until some termination condition is met (including manual termination of the process)........ Not yet thouse, will add this functionality.
