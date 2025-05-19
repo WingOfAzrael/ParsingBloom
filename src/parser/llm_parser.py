@@ -372,8 +372,26 @@ class LLMParser:
                 #data["message_id"] = canonical_id
                 data.setdefault("message_id", rec["canonical_id"])  # NEW
                 data["message_id"] = rec["gmail_id"]
-                data = validate_record(data, CFG.active_schema)
-                txns[idx] = RecordModel(**{**data, "run_id": run_id})
+                #data = validate_record(data, CFG.active_schema)
+                ##txns[idx] = RecordModel(**{**data, "run_id": run_id})
+                #raw = data.model_dump() if isinstance(data, BaseModel) else dict(data)
+                #raw["run_id"] = run_id
+                ##txns[idx] = RecordModel(**{**raw, "run_id": run_id})
+                ## parse + resolve → Pydantic model
+                #try:
+                #    txn = validate_record(raw, CFG.active_schema)
+                #except ValidationError as e:
+                #    # optional: log e.errors()
+                #    continue
+                #txns[idx] = txn
+
+
+
+                data["run_id"] = run_id
+                # this now uses Transaction (with mask‐resolution!) 
+                txn = validate_record(data, CFG.active_schema)
+                txns[idx] = txn
+
             except ValidationError as e:
                 # adapt regex_dispatch for arbitrary schemas.
                 # For now, return raw JSON in RecordModel shape if possible.

@@ -45,6 +45,10 @@ class AccountConfig(BaseModel):
     institution:             str
     currency:                str
 
+# ── account_mask configuration ───────────────────────────────────────────────
+class AccountMaskConfig(BaseModel):
+    regex: str
+    suffix_length: int
 
 # ── paths (subscriptable) ───────────────────────────────────────────────────
 class PathsConfig(BaseModel):
@@ -182,6 +186,7 @@ class FullConfig(BaseModel):
     default_connector: Optional[str] = None
     active_schema:    Optional[str] = None
     connectors:        Dict[str, ConnectorConfig]
+    account_mask:      AccountMaskConfig
     accounts:          List[AccountConfig]
     determinism:      DeterminismConfig
     paths:             PathsConfig

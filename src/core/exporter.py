@@ -15,10 +15,7 @@
 #  Fast-path append if new batch dates ≥ last existing date.
 #  Otherwise, merge the existing CSV and new batch in O(N+M) time.
 #
-#
-#from __future__ import annotations
-#
-#
+
 #TransactionExporter
 #
 #Responsible for appending new transactions into your master CSV,
@@ -32,15 +29,21 @@ from collections import defaultdict
 import heapq
 from datetime import datetime, date
 from decimal import Decimal
+import re
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from core.config_loader import load_config
-from utils.validators import get_model, validate_record
+from utils.validators import get_model, validate_record, Transaction
+
+
+cfg         = load_config()
+
+# build a regex and map for suffix-driven account resolution so that we doesnt have LLM guessing for account numbers for internal data transit channels
 
 class TransactionExporter:
     def __init__(self, master_file: str | Path | None = None, runs_csv: str | None = None) -> None:
         # Load paths via Pydantic config
-        cfg   = load_config()
+        #cfg   = load_config()
         paths = cfg.paths
         self.cfg = cfg
         self.schema = cfg.active_schema
@@ -51,7 +54,7 @@ class TransactionExporter:
         self.meta_csv: Path = Path(paths.metadata_csv)
 
         # Ensure directories exist
-        for p in (self.master, self.runs_csv):
+        for p in (self.master_file, self.runs_csv):
             p.parent.mkdir(parents=True, exist_ok=True)
 
         # Canonical columns from chosen schema
@@ -87,26 +90,26 @@ class TransactionExporter:
     # Master-file writing                                                #
     # ================================================================== #
     def _write_master(self, new_batch: List[BaseModel]) -> None:
-        if self.master.exists() and self.master.stat().st_size > 0:
-            with self.master.open(newline="") as f:
+        if self.master_file.exists() and self.master_file.stat().st_size > 0:
+            with self.master_file.open(newline="") as f:
                 last_row = None
                 for last_row in csv.DictReader(f):
                     pass
             last_date = last_row["date"] if last_row else ""
             if new_batch and new_batch[0].date.strftime("%Y-%m-%d") >= last_date:
-                self._append(self.master, new_batch, header_always=False)
+                self._append(self.master_file, new_batch, header_always=False)
             else:
-                self._merge_and_write(self.master, new_batch)
+                self._merge_and_write(self.master_file, new_batch)
         else:
-            self._append(self.master, new_batch, header_always=True)
+            self._append(self.master_file, new_batch, header_always=True)
     
     # ------------------------------------------------------------------ #
     # Duplicate detection                                                 #
     # ------------------------------------------------------------------ #
     def _load_processed_ids(self) -> Set[str]:
-        if not self.master.exists():
+        if not self.master_file.exists():
             return set()
-        with self.master.open(newline="") as f:
+        with self.master_file.open(newline="") as f:
             r = csv.DictReader(f)
             return {
                 row["message_id"]
@@ -120,9 +123,17 @@ class TransactionExporter:
     # ================================================================== #
     # Public API                                                         #
     # ================================================================== #
-    def export(self, txns: List[Optional[BaseModel]], run_id: str) -> None:
+    def export(self, txns: List[Transaction], run_id: str) -> None:
+        # 1) parse & validate (incl. account‐resolution) in one step:
+        #txns: List[BaseModel] = []
+        #for raw in raw_txns:
+        #    try:
+        #        txn = validate_record(raw, self.schema)
+        #    except ValidationError:
+        #        continue
+        #    txns.append(txn)
+        # txns are already validated Transaction models
         txns = [t for t in txns if t is not None]
-
         buckets = self._prep_rows(txns, run_id)
         for lst in buckets.values():
             self._impute_available_balance(lst)
@@ -146,10 +157,10 @@ class TransactionExporter:
     # ID helpers                                                         #
     # ================================================================== #
     def _get_max_id(self) -> int:
-        if not self.id_field or not self.master.exists():
+        if not self.id_field or not self.master_file.exists():
             return 0
         max_id = 0
-        with self.master.open(newline="") as f:
+        with self.master_file.open(newline="") as f:
             reader = csv.DictReader(f)
             if self.id_field in (reader.fieldnames or []):
                 for row in reader:
