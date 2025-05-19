@@ -63,7 +63,7 @@ class Transaction(BaseTxModel):
 
         tx_type = values.get("transaction_type", "").lower()
 
-        # C) If it's a TRANSFER, do BOTH-SIDED suffix-mapping and exit
+        # If it's a TRANSFER, do BOTH-SIDED suffix-mapping and exit
         if tx_type == "transfer":
             desc  = values.get("description", "") or ""
             masks = mask_re.findall(desc)
