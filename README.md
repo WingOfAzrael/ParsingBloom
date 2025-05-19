@@ -96,21 +96,21 @@ deploy/deploy_pb.sh
 
 Note: These command options override whatever you have in config.yaml
 
-- --gpus
+ --gpus
     Enable CUDA/GPU flags (if your container or host has Nvidia drivers).
 
--   --force
+   --force
     Reinstall dependencies and overwrite any existing build artifacts.
 
--   --gpus             Use GPU (sets PARSINGBLOOM_DEVICE=cuda)
+   --gpus             Use GPU (sets PARSINGBLOOM_DEVICE=cuda)
 
--   --runs N           Number of replicates (default: 1)
+   --runs N           Number of replicates (default: 1)
 
--   --out-dir DIR      Base output directory (default: data/ if --runs=1; data/pipeline_executes/ if >1)
+   --out-dir DIR      Base output directory (default: data/ if --runs=1; data/pipeline_executes/ if >1)
 
--   --schedule MODE    Daemon mode (only valid when --runs=1): hourly, daily, or cron per config
+   --schedule MODE    Daemon mode (only valid when --runs=1): hourly, daily, or cron per config
 
--   -h, --help         Show this help and exit
+   -h, --help         Show this help and exit
 
     Requires: Python 3.10 toolchain, Hugging Face token.
 
